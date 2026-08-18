@@ -1,0 +1,40 @@
+# Secrets & credentials
+.env
+token.json
+client_secret.json
+
+# Personal / generated data (don't commit these)
+memory.json
+reminders.json
+todo.json
+notes.json
+smarthome.json
+brain/data/
+knowledge_vault/
+knowledge_processed/
+knowledge_input/*
+!knowledge_input/.gitkeep
+workspace/
+memory_vault/
+jarvis.log
+response.mp3
+test_audio.mp3
+
+# Generated projects
+Jarvis_Projects/
+mobile_projects/
+projects/
+
+# Generated images (webcam, screenshots, admin reference photo)
+static/*.jpg
+
+# HTTPS certs
+certs/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store

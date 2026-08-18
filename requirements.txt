@@ -1,0 +1,45 @@
+# Core
+flask
+flask-socketio
+openai
+python-dotenv
+
+# Voice
+speechrecognition
+edge-tts
+pygame
+
+# System / desktop
+psutil
+pyautogui
+Pillow
+opencv-python
+pywhatkit
+
+# Web
+requests
+beautifulsoup4
+duckduckgo-search
+playwright
+
+# Google (Calendar / Gmail / Gemini)
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+google-generativeai
+yagmail
+
+# Knowledge / RAG
+pypdf
+chromadb
+sentence-transformers
+
+# Utilities
+dateparser
+PyGithub
+yfinance
+send2trash
+numpy
+
+# Telegram
+python-telegram-bot

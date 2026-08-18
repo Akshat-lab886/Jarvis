@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. | System Monitor</title>
+    <!-- Sci-fi Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=2">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+
+<body>
+    <div class="hud-overlay"></div> <!-- Grid pattern overlay -->
+
+    <div class="container">
+        <!-- Header: System Status -->
+        <header class="hud-header">
+            <div class="status-panel glass">
+                <span class="label">SYSTEM STATUS</span>
+                <span class="value online">ONLINE</span>
+            </div>
+            <div class="vision-trigger glass" id="vision-btn" title="Analyze Screen">
+                <i class="fa-solid fa-eye"></i> <span class="label">VISION</span>
+            </div>
+            <div class="librarian-trigger glass" id="librarian-btn" title="Feed Knowledge">
+                <i class="fa-solid fa-book"></i> <span class="label">LIBRARIAN</span>
+            </div>
+            <div class="dev-trigger glass" id="dev-btn" title="Developer Focus">
+                <i class="fa-solid fa-code"></i> <span class="label">DEV MODE</span>
+            </div>
+            <div class="tasks-trigger glass" id="tasks-btn" title="To-Do List">
+                <i class="fa-solid fa-list-check"></i> <span class="label">TASKS</span>
+            </div>
+        </header>
+
+        <!-- To-Do List Panel -->
+        <div class="librarian-panel glass" id="tasks-panel" style="top: 80px;">
+            <div class="panel-header">
+                <i class="fa-solid fa-list-check"></i> <span>TO-DO LIST</span>
+                <button class="close-btn" id="tasks-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="task-input-row">
+                <input type="text" id="task-input" placeholder="Add a task..." autocomplete="off">
+                <button class="feed-btn task-add-btn" id="task-add-btn"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <div class="file-list" id="task-list">
+                <!-- Tasks render here -->
+            </div>
+            <button class="feed-btn study-btn" id="task-clear-btn"
+                style="background: var(--neon-cyan); margin-top: 10px;">
+                CLEAR ALL
+            </button>
+        </div>
+
+        <!-- Librarian Knowledge Panel -->
+        <div class="librarian-panel glass" id="librarian-panel">
+            <div class="panel-header">
+                <i class="fa-solid fa-server"></i> <span>KNOWLEDGE UPLOAD</span>
+                <button class="close-btn" id="librarian-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="upload-area" id="drop-zone">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <p>Drag & Drop files or Click to Browse</p>
+                <input type="file" id="knowledge-upload" accept=".pdf,.txt,.md" style="display: none;">
+            </div>
+            <div class="file-list" id="file-list">
+                <!-- Files will appear here -->
+            </div>
+            <button class="feed-btn" id="feed-btn" disabled>
+                FEED JARVIS (30m Memory)
+            </button>
+            <button class="feed-btn study-btn" id="study-btn" style="background: var(--neon-cyan); margin-top: 10px;"
+                onclick="sendText('Study this')">
+                STUDY PERMANENTLY
+            </button>
+        </div>
+
+        <!-- System Vitals Panel (Left Side) -->
+        <div class="vitals-panel glass" id="vitals-panel">
+            <div class="vitals-header">
+                <i class="fa-solid fa-microchip"></i> <span>SYSTEM VITALS</span>
+            </div>
+            <div class="vitals-grid">
+                <div class="vital-item" id="vital-cpu">
+                    <div class="vital-label">CPU</div>
+                    <div class="vital-bar-container">
+                        <div class="vital-bar" id="cpu-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="vital-value" id="cpu-value">0%</div>
+                </div>
+                <div class="vital-item" id="vital-ram">
+                    <div class="vital-label">RAM</div>
+                    <div class="vital-bar-container">
+                        <div class="vital-bar" id="ram-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="vital-value" id="ram-value">0%</div>
+                </div>
+                <div class="vital-item" id="vital-battery">
+                    <div class="vital-label">
+                        <i class="fa-solid fa-battery-full" id="battery-icon"></i> BAT
+                    </div>
+                    <div class="vital-bar-container">
+                        <div class="vital-bar battery" id="battery-bar" style="width: 100%"></div>
+                    </div>
+                    <div class="vital-value" id="battery-value">100%</div>
+                </div>
+                <div class="vital-item" id="vital-disk">
+                    <div class="vital-label">DISK</div>
+                    <div class="vital-bar-container">
+                        <div class="vital-bar" id="disk-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="vital-value" id="disk-value">0%</div>
+                </div>
+            </div>
+            <div class="vitals-time" id="vitals-time">--:--:--</div>
+        </div>
+
+        <!-- Main Core: The Arc Reactor -->
+        <main class="core-container">
+            <div class="arc-reactor" id="core">
+                <div class="ring-outer"></div>
+                <div class="ring-inner"></div>
+                <div class="core-light"></div>
+            </div>
+        </main>
+
+        <!-- Dynamic Content: Messages -->
+        <div class="message-feed glass" id="message-container">
+            <div class="intro-msg">Awaiting input, Sir...</div>
+        </div>
+
+        <!-- Smart Home Control Panel -->
+        <div class="home-control glass" id="home-control">
+            <div class="home-control-header">
+                <i class="fa-solid fa-house"></i> <span>HOME CONTROL</span>
+            </div>
+
+            <!-- Photo Capture Display -->
+            <div class="photo-display" id="photo-display">
+                <div class="photo-frame" id="photo-frame">
+                    <i class="fa-solid fa-camera"></i>
+                    <span>No Photo</span>
+                </div>
+                <div class="photo-controls">
+                    <button class="capture-btn" id="capture-btn" title="Take Photo">
+                        <i class="fa-solid fa-camera"></i>
+                    </button>
+                    <button class="upload-btn" id="upload-btn" title="Upload Photo">
+                        <i class="fa-solid fa-upload"></i>
+                    </button>
+                    <input type="file" id="image-upload" accept="image/*" style="display: none;">
+                </div>
+            </div>
+
+            <div class="device-grid" id="device-grid">
+                <div class="device-card" data-device="living_room_light">
+                    <i class="fa-solid fa-lightbulb"></i>
+                    <span class="device-name">Living Room</span>
+                    <span class="device-status off" id="status-living_room_light">OFF</span>
+                </div>
+                <div class="device-card" data-device="bedroom_light">
+                    <i class="fa-solid fa-lightbulb"></i>
+                    <span class="device-name">Bedroom</span>
+                    <span class="device-status off" id="status-bedroom_light">OFF</span>
+                </div>
+                <div class="device-card" data-device="kitchen_light">
+                    <i class="fa-solid fa-lightbulb"></i>
+                    <span class="device-name">Kitchen</span>
+                    <span class="device-status off" id="status-kitchen_light">OFF</span>
+                </div>
+                <div class="device-card" data-device="bathroom_light">
+                    <i class="fa-solid fa-lightbulb"></i>
+                    <span class="device-name">Bathroom</span>
+                    <span class="device-status off" id="status-bathroom_light">OFF</span>
+                </div>
+                <div class="device-card" data-device="fan">
+                    <i class="fa-solid fa-fan"></i>
+                    <span class="device-name">Fan</span>
+                    <span class="device-status off" id="status-fan">OFF</span>
+                </div>
+                <div class="device-card" data-device="ac">
+                    <i class="fa-solid fa-snowflake"></i>
+                    <span class="device-name">A/C</span>
+                    <span class="device-status off" id="status-ac">OFF</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-container glass">
+            <input type="text" id="chat-input" placeholder="Type a command..." autocomplete="off">
+            <button id="send-btn"><i class="fa fa-paper-plane"></i></button>
+        </div>
+
+        <!-- Footer: Status Text -->
+        <footer class="hud-footer">
+            <div class="status-text" id="status">Systems Nominal</div>
+            <div class="listening-indicator" id="listening-indicator">
+                <span></span><span></span><span></span><span></span><span></span>
+            </div>
+        </footer>
+
+        <!-- Live Terminal Box -->
+        <div id="terminal-box" class="terminal-box glass" style="display: none;"></div>
+
+        <!-- Mobile Mic Button (Hidden on Desktop) -->
+        <div class="mobile-mic-btn" id="mobile-mic-btn">
+            <i class="fa-solid fa-microphone"></i>
+        </div>
+
+    </div>
+
+    <!-- Hidden audio element for responses -->
+    <audio id="audio-player" style="display:none;"></audio>
+
+    <script src="{{ url_for('static', filename='script.js') }}?v=2"></script>
+</body>
+
+</html>
