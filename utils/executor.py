@@ -6,6 +6,7 @@ from utils.brain import Brain
 from utils.mouth import Mouth
 from utils.tools import Tools
 from utils.memory import Memory
+from utils.episodic_memory import EpisodicMemory
 from utils.organizer import clean_downloads, delete_file, delete_screenshots
 from utils.downloader import search_and_download
 from utils.web_reader import get_answer_from_web
@@ -14,6 +15,13 @@ from utils.security import Security
 from utils.coder import Coder
 from utils.history import CommandLog
 from utils.tasks import TodoList, NotePad
+from utils.relationships import RelationshipManager
+from utils.privacy import PrivacyFramework
+from utils.fridge_vision import FridgeVision
+from utils.meeting_audio import MeetingTranscriber
+from utils.complex_task import ComplexTaskManager, normalize_step_specs
+from utils.skills import SkillRegistry, SkillError
+from utils.tool_registry import ToolRegistry, ToolError
 
 logger = logging.getLogger("Jarvis.Executor")
 
@@ -21,14 +29,24 @@ class JarvisExecutor:
     def __init__(self):
         self.mouth = Mouth()
         self.tools = Tools()
-        self.memory = Memory()
+        self.memory = Memory()  # Legacy flat memory (wraps episodic)
+        self.episodic = EpisodicMemory()  # New structured memory
         self.smarthome = SmartHome()
         self.security = Security()
         self.coder = Coder()
+        self.skills = SkillRegistry()
+        self.tool_registry = ToolRegistry()
         self.history = CommandLog()
         self.tasks = TodoList()
         self.notes = NotePad()
-        self.active_project = None # Dev Context State
+        self.relationships = RelationshipManager(self.episodic)
+        self.privacy = PrivacyFramework()
+        self.fridge = FridgeVision(episodic_memory=self.episodic)
+        self.meeting = MeetingTranscriber(
+            episodic_memory=self.episodic, tasks=self.tasks, mouth=self.mouth
+        )
+        self.active_project = None  # Dev Context State
+        self._complex_task_manager = None  # Lazy init
         logger.info("JarvisExecutor modules initialized (Lazy Loaded).")
 
     @property
@@ -67,11 +85,34 @@ class JarvisExecutor:
         return self._scheduler
 
     @property
+    def recurring(self):
+        if not hasattr(self, '_recurring'):
+            from utils.recurring import RecurringAutomations
+            self._recurring = RecurringAutomations(mouth=self.mouth)
+        return self._recurring
+
+    @property
+    def approvals(self):
+        if not hasattr(self, '_approvals'):
+            from utils.approvals import get_manager
+            self._approvals = get_manager()
+        return self._approvals
+
+    @property
     def desktop_agent(self):
         if not hasattr(self, '_desktop_agent'):
             from utils.desktop_agent import DesktopAgent
             self._desktop_agent = DesktopAgent()
         return self._desktop_agent
+
+    @property
+    def task_manager(self):
+        """Lazy-init the ComplexTaskManager."""
+        if self._complex_task_manager is None:
+            self._complex_task_manager = ComplexTaskManager(
+                executor=self, brain=None, ui_callback=None
+            )
+        return self._complex_task_manager
 
     def execute_command(self, command, brain, original_text=None, ui_callback=None):
         """
@@ -82,8 +123,19 @@ class JarvisExecutor:
         action = command.get('action', '').lower()
         target = command.get('target', '')
         response_text = command.get('response', '')
-        
+
         result_msg = ""
+
+        # Human-in-the-loop checkpoint: critical actions wait for a
+        # deterministic human "yes" before executing (G3 guardrail).
+        if action and self.approvals.requires(action):
+            approved, note = self.approvals.request(command)
+            if not approved:
+                result_msg = (f"⛔ Action '{action}' was cancelled — "
+                              f"{note}.")
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+                return result_msg
 
         try:
             if action == 'system_info':
@@ -161,6 +213,7 @@ class JarvisExecutor:
             elif action == 'note_save':
                 text = command.get('text') or target or original_text or ''
                 result_msg = self.notes.save(text)
+                if ui_callback: ui_callback('notes_update', {'items': self.notes.items_json()})
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
@@ -172,6 +225,7 @@ class JarvisExecutor:
             elif action == 'note_remove':
                 text = command.get('text') or target or original_text or ''
                 result_msg = self.notes.remove(text)
+                if ui_callback: ui_callback('notes_update', {'items': self.notes.items_json()})
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
@@ -215,6 +269,12 @@ class JarvisExecutor:
                 key = command.get('key')
                 value = command.get('value')
                 self.memory.save_memory(key, value)
+                # Auto-capture into episodic memory
+                self.episodic.remember(
+                    text=f"{key}: {value}", category='fact',
+                    tags=[key.lower().replace(' ', '_')],
+                    source='conversation', importance=7
+                )
                 result_msg = f"I'll remember that your {key} is {value}."
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
@@ -402,8 +462,16 @@ class JarvisExecutor:
                     weather = self.tools.get_weather()
                     calendar = self.tools.get_calendar()
                     emails = self.tools.get_emails()
+                    headlines = ""
+                    try:
+                        from utils.web_reader import get_top_headlines
+                        headlines = get_top_headlines(5)
+                    except Exception:
+                        headlines = "(headlines unavailable)"
                     
-                    prompt = f"Time: {cur_time}. Date: {date_str}. Weather: {weather}. Calendar: {calendar}. Emails: {emails}. Generate a briefing."
+                    prompt = (f"Time: {cur_time}. Date: {date_str}. Weather: {weather}. "
+                              f"Calendar: {calendar}. Emails: {emails}. "
+                              f"Today's headlines: {headlines}. Generate a briefing.")
                     brain_res = brain.think(prompt)
                     result_msg = brain_res.get('response', f"Good morning Sir. {cur_time}, {weather}.")
                     if ui_callback: ui_callback('ai_text', {'text': result_msg})
@@ -531,22 +599,145 @@ class JarvisExecutor:
                 description = command.get('description', 'do something complex')
                 self.mouth.speak(f"I am writing a script to {description}, Sir.")
                 if ui_callback: ui_callback('status', {'message': f'Coding: {description}...'})
-                
-                # 1. Ask Brain for Code
-                code_prompt = f"Write a Python script to: {description}. Ensure it prints the final result. Return ONLY the raw code."
-                brain_resp = brain.think(code_prompt)
-                raw_code = brain_resp.get('response', '')
-                
-                # 2. Cleanup Code (remove markdown)
-                clean_code = raw_code.replace("```python", "").replace("```", "").strip()
-                
-                # 3. Execute
-                if clean_code:
-                    output = self.coder.execute_python(clean_code)
-                    result_msg = f"The result is: {output}"
+
+                # Use ComplexTaskManager for single-step code tasks too
+                # — it handles auto-fix, retries, and progress reporting
+                self.task_manager.brain = brain
+                self.task_manager.ui_callback = ui_callback or (lambda e, d: None)
+
+                task_obj = self.task_manager.create_task(
+                    f"Write and run code: {description}",
+                    [f"Write and execute Python code to: {description}"]
+                )
+                ok, msg = self.task_manager.start_task(task_obj.id)
+                result_msg = msg
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                if not ok:
+                    self.mouth.speak(result_msg)
+
+            elif action == 'complex_task':
+                task_text = command.get('task', original_text or '')
+                raw_steps = command.get('steps') or []
+
+                # Normalize whatever the LLM produced: plain strings,
+                # dicts without depends_on, mixed/string IDs, etc.
+                mode, specs = normalize_step_specs(raw_steps)
+                if not specs:
+                    specs = [{"id": 1, "text": task_text, "depends_on": []}]
+
+                # Wire up the task manager with the current brain and callback
+                self.task_manager.brain = brain
+                self.task_manager.ui_callback = ui_callback or (lambda e, d: None)
+
+                if mode == "deps":
+                    task_obj = self.task_manager.create_task_with_deps(
+                        task_text, specs
+                    )
                 else:
-                    result_msg = "Failed to generate code."
-                
+                    # No real dependencies — clean sequential run
+                    task_obj = self.task_manager.create_task(
+                        task_text, [s['text'] for s in specs]
+                    )
+
+                ok, msg = self.task_manager.start_task(task_obj.id)
+                result_msg = msg
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                if not ok:
+                    self.mouth.speak(result_msg)
+
+            elif action == 'run_skill':
+                name = command.get('name', '')
+                params = command.get('params') or {}
+                self.mouth.speak(f"Running skill {name}, Sir.")
+                if ui_callback:
+                    ui_callback('status', {'message': f'Skill: {name}...'})
+                try:
+                    res = self.skills.run(
+                        name, params=params, coder=self.coder
+                    )
+                    result_msg = res['output'] if res['success'] else (
+                        f"Skill '{name}' failed: {res['output'][:300]}"
+                    )
+                except SkillError as e:
+                    result_msg = str(e)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg[:200])
+
+            elif action == 'save_skill':
+                name = command.get('name')
+                description = command.get('description', '')
+                code = command.get('code')
+                params = command.get('params') or {}
+                try:
+                    result_msg = self.skills.save_skill(
+                        name, description, code, params=params
+                    )
+                except SkillError as e:
+                    result_msg = str(e)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'list_skills':
+                skills = self.skills.list_skills()
+                if not skills:
+                    result_msg = "No skills saved yet, Sir."
+                else:
+                    lines = [f"{len(skills)} skills available:"]
+                    for s in skills:
+                        p = f" (params: {', '.join(s['params'])})" \
+                            if s['params'] else ""
+                        d = s.get('description') or ''
+                        lines.append(f"- {s['name']}: {d[:60]}{p}")
+                    result_msg = "\n".join(lines)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(f"You have {len(skills)} skills, Sir.")
+
+            elif action == 'delete_skill':
+                result_msg = self.skills.delete_skill(command.get('name', ''))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'call_tool':
+                name = command.get('name', '')
+                args = command.get('args') or command.get('params') or {}
+                try:
+                    ok, text = self.tool_registry.call(name, args=args)
+                    result_msg = text
+                except ToolError as e:
+                    result_msg = str(e)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg.split('\n')[0][:180])
+
+            elif action == 'list_tools':
+                tools = self.tool_registry.list_tools()
+                if not tools:
+                    result_msg = "No external tools registered, Sir."
+                else:
+                    lines = [f"{len(tools)} external tools available:"]
+                    for t in tools:
+                        p = ", ".join(t['params']) or 'none'
+                        lines.append(f"- {t['name']}: "
+                                     f"{t['description'][:60]} (params: {p})")
+                    result_msg = "\n".join(lines)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(f"You have {len(tools)} external tools, Sir.")
+
+            elif action == 'schedule_automation':
+                text = command.get('text', original_text or '')
+                result_msg = self.recurring.add(text)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'list_automations':
+                result_msg = self.recurring.list_jobs()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(
+                    f"You have {self.recurring.count()} recurring "
+                    f"automations, Sir.")
+
+            elif action == 'cancel_automation':
+                result_msg = self.recurring.remove(
+                    command.get('keyword', ''))
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
@@ -801,6 +992,212 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            # === EPISODIC MEMORY ===
+            elif action == 'remember':
+                text = command.get('text') or target or original_text or ''
+                category = command.get('category', 'fact')
+                mem = self.episodic.remember(text, category=category, source='conversation')
+                result_msg = f"I'll remember that: {text[:80]}" if mem else "I couldn't store that."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'recall':
+                query = command.get('query') or target or original_text or ''
+                results = self.episodic.search(query, limit=5)
+                if results:
+                    lines = [f"I found {len(results)} related memories:"]
+                    for m in results:
+                        lines.append(f"  • [{m['category']}] {m['text'][:80]}")
+                    result_msg = "\n".join(lines)
+                else:
+                    result_msg = f"I don't have any memories about '{query}'."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'forget_memory':
+                text = command.get('text') or target or ''
+                count = self.episodic.forget(keyword=text)
+                result_msg = f"Forgot {count} memories matching '{text}'." if count else f"No memories found for '{text}'."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'memory_stats':
+                stats = self.episodic.stats()
+                result_msg = f"Memory: {stats['total']} entries across {len(stats['categories'])} categories. "
+                result_msg += "Categories: " + ", ".join(f"{k}({v})" for k, v in stats['categories'].items())
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            # === RELATIONSHIPS ===
+            elif action == 'add_person':
+                name = command.get('name', '')
+                rel = command.get('relationship', '')
+                details = command.get('details', '')
+                birthday = command.get('birthday', '')
+                person = self.relationships.add_person(
+                    name, relationship_type=rel, details=details, birthday=birthday
+                )
+                result_msg = f"Got it. {name} is your {rel}."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'person_info':
+                name = command.get('name') or target or ''
+                person = self.relationships.get_person(name)
+                if person:
+                    lines = [f"{person['name']} ({person.get('relationship', '?')}):"]
+                    if person.get('hobbies'): lines.append(f"  Hobbies: {', '.join(person['hobbies'])}")
+                    if person.get('allergies'): lines.append(f"  Allergies: {', '.join(person['allergies'])}")
+                    if person.get('birthday'): lines.append(f"  Birthday: {person['birthday']}")
+                    if person.get('preferences'): lines.append(f"  Likes: {', '.join(person['preferences'][:5])}")
+                    result_msg = "\n".join(lines)
+                else:
+                    result_msg = f"I don't have info about {name}. Tell me about them!"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'gift_suggestions':
+                name = command.get('name') or target or ''
+                suggestions = self.relationships.get_gift_suggestions(name)
+                result_msg = f"Gift ideas for {name}:\n" + "\n".join(f"  • {s}" for s in suggestions)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'dinner_suggestions':
+                name = command.get('name') or target or ''
+                suggestions = self.relationships.get_dinner_suggestions(name)
+                result_msg = f"Dinner ideas with {name}:\n" + "\n".join(f"  • {s}" for s in suggestions)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            # === MEETING MODE ===
+            elif action == 'start_meeting':
+                result_msg = self.meeting.start_recording()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'stop_meeting':
+                result_msg = self.meeting.stop_recording()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'meeting_transcript':
+                transcript = self.meeting.get_live_transcript()
+                result_msg = transcript if transcript else "No transcript available yet."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Here's what I've captured so far, Sir.")
+
+            # === FRIDGE VISION ===
+            elif action == 'analyze_fridge':
+                self.mouth.speak("Analyzing your fridge, Sir.")
+                if ui_callback: ui_callback('status', {'message': 'Analyzing fridge contents...'})
+                result = self.fridge.analyze_fridge()
+                if result.get('error'):
+                    result_msg = result['error']
+                else:
+                    ingredients = result.get('ingredients', [])
+                    recipes = result.get('recipes', [])
+                    shopping = result.get('shopping_list', [])
+                    lines = [f"Found {len(ingredients)} ingredients: {', '.join(ingredients[:10])}."]
+                    if recipes:
+                        lines.append(f"\nSuggested {len(recipes)} recipes:")
+                        for r in recipes[:3]:
+                            name = r.get('name', 'Recipe') if isinstance(r, dict) else str(r)[:60]
+                            lines.append(f"  🍳 {name}")
+                    if shopping:
+                        lines.append(f"\nShopping list: {', '.join(shopping[:8])}")
+                    result_msg = "\n".join(lines)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'suggest_recipe':
+                prompt = command.get('query') or target or original_text or ''
+                result_msg = self.fridge.quick_recipe(prompt)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            # === TRIAGE & PROACTIVE ===
+            elif action == 'triage':
+                if not hasattr(self, '_proactive'):
+                    from utils.proactive import ProactiveEngine
+                    self._proactive = ProactiveEngine(
+                        secretary=self.tools.secretary,
+                        episodic_memory=self.episodic
+                    )
+                result_msg = self._proactive.triage.get_triage_summary()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Here's your message triage, Sir.")
+
+            elif action == 'schedule_insights':
+                if not hasattr(self, '_proactive'):
+                    from utils.proactive import ProactiveEngine
+                    self._proactive = ProactiveEngine(
+                        secretary=self.tools.secretary,
+                        episodic_memory=self.episodic
+                    )
+                suggestions = self._proactive.time_blocker.scan_and_adjust()
+                if suggestions:
+                    lines = ["Schedule insights:"]
+                    for s in suggestions[:5]:
+                        lines.append(f"  • {s['message']}")
+                    result_msg = "\n".join(lines)
+                else:
+                    result_msg = "Your schedule looks good, Sir."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            # === PRIVACY ===
+            elif action == 'privacy_settings':
+                result_msg = self.privacy.get_trust_summary()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Here are your privacy settings, Sir.")
+
+            elif action == 'privacy_update':
+                key = command.get('key', '')
+                value = command.get('value', '')
+                result_msg = self.privacy.update_setting(key, value)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'audit_log':
+                entries = self.privacy.get_audit_log(limit=10)
+                if entries:
+                    lines = ["Recent activity:"]
+                    for e in entries:
+                        lines.append(f"  [{e['date'][:16]}] {e['action']} — {e.get('status', '')}")
+                    result_msg = "\n".join(lines)
+                else:
+                    result_msg = "No audit entries yet."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            # === ENHANCED MORNING BRIEFING ===
+            elif action == 'morning_briefing':
+                try:
+                    if ui_callback: ui_callback('status', {'message': 'Preparing morning briefing...'})
+                    from utils.briefing import MorningBriefing
+                    from utils.proactive import ProactiveEngine
+                    proactive = ProactiveEngine(
+                        secretary=self.tools.secretary,
+                        episodic_memory=self.episodic
+                    )
+                    briefing = MorningBriefing(
+                        tools=self.tools,
+                        secretary=self.tools.secretary,
+                        episodic_memory=self.episodic,
+                        relationships=self.relationships,
+                        proactive_engine=proactive,
+                        tasks=self.tasks,
+                        history=self.history,
+                        brain=brain
+                    )
+                    result_msg = briefing.generate()
+                    if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                    self.mouth.speak(result_msg)
+                except Exception as e:
+                    result_msg = "Morning briefing failed."
+                    self.mouth.speak(result_msg)
+
             elif action == 'help':
                 result_msg = (
                     "Here's what I can do, Sir:\n"
@@ -823,10 +1220,65 @@ class JarvisExecutor:
                     "• To-do list — 'add <task> to my todo list', 'mark X as done'\n"
                     "• Notes — 'take a note: <text>', 'show my notes'\n"
                     "• Daily recap — 'what did I do today'\n"
+                    "🧠 NEW FEATURES:\n"
+                    "• Episodic Memory — I remember your preferences, goals, and context across chats\n"
+                    "• Relationship Intelligence — I track people you care about, birthdays, gift ideas\n"
+                    "• Fridge Vision — 'look at my fridge' for recipe suggestions\n"
+                    "• Meeting Mode — 'start meeting mode' for live transcription\n"
+                    "• Privacy Controls — 'privacy settings' to manage trust levels\n"
+                    "• Cross-App Triage — 'what needs my attention' for priority messages\n"
                     "Say 'morning briefing' for a daily summary."
                 )
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak("I can do a lot, Sir. Check the dashboard for the full list.")
+
+            # === CONVERSATION MEMORY ===
+            elif action == 'last_topic':
+                topics = self.episodic.get_by_category('conversation_topic', limit=5)
+                if topics:
+                    latest = topics[0]
+                    ts = latest.get('created', '')[:16].replace('T', ' ')
+                    result_msg = f"Last time we talked ({ts}): {latest['text']}"
+                    # Also show a few more recent topics
+                    if len(topics) > 1:
+                        result_msg += f"\n\nBefore that:\n"
+                        for t in topics[1:3]:
+                            ts2 = t.get('created', '')[:16].replace('T', ' ')
+                            result_msg += f"  • [{ts2}] {t['text']}\n"
+                else:
+                    result_msg = "We haven't had any conversations yet, Sir. This is our first!"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'conversation_history':
+                topics = self.episodic.get_by_category('conversation_topic', limit=10)
+                if topics:
+                    lines = ["Here's our recent conversation history:"]
+                    for t in topics:
+                        ts = t.get('created', '')[:16].replace('T', ' ')
+                        lines.append(f"  • [{ts}] {t['text']}")
+                    result_msg = "\n".join(lines)
+                else:
+                    result_msg = "No conversation history found, Sir."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Here's our recent conversation history, Sir.")
+
+            elif action == 'search_transcripts':
+                query = command.get('query', original_text or '')
+                try:
+                    from utils.transcript_search import get_archive
+                    hits = get_archive().search(query, limit=5)
+                    if not hits:
+                        result_msg = f"No past conversations matched '{query}', Sir."
+                    else:
+                        lines = [f"Found {len(hits)} matching exchanges for '{query}':"]
+                        for h in hits:
+                            lines.append(f"• {h['snippet']}  [{h['created'][:16]}]")
+                        result_msg = "\n".join(lines)
+                except Exception as e:
+                    result_msg = f"Transcript search failed: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg[:220])
 
             else:
                 result_msg = f"Unknown action: {action}"
@@ -834,13 +1286,25 @@ class JarvisExecutor:
 
         except Exception as e:
             logger.error(f"Executor Error: {e}", exc_info=True)
-            result_msg = f"System error during execution: {e}"
-
-        # Record the command for the daily-summary feature
+            result_msg = f"System error during execution: {e}"            # Record the command for the daily-summary feature
         if original_text:
             try:
                 self.history.log(original_text, action, result_msg or response_text)
             except Exception:
                 pass
+
+        # Auto-capture memories from all conversations
+        if original_text and action in ('chat', None, ''):
+            try:
+                self.episodic.auto_capture(original_text, result_msg or response_text)
+            except Exception:
+                pass
+
+        # Periodically consolidate memories (every ~50 interactions)
+        try:
+            if self.episodic.count() > 100 and self.episodic.count() % 50 == 0:
+                self.episodic.consolidate()
+        except Exception:
+            pass
 
         return result_msg

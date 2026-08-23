@@ -6,29 +6,61 @@ from playwright.sync_api import sync_playwright
 from utils.logger import web_log
 
 class WebAgent:
+    # Shared selector for all interactable elements — read_dom and
+    # click_index must stay in lockstep (index order matters).
+    INTERACTIVE_SEL = ("a[href], button, input, select, textarea, "
+                       "[role='button'], [onclick]")
+
     def __init__(self):
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.screenshot_path = os.path.join(self.base_dir, 'static', 'agent_view.jpg')
-        
+        self.profile_dir = os.path.join(self.base_dir, 'utils', 'chrome_profile')
+
         # Thread-safe communication
         self.command_queue = queue.Queue()
         self.result_queue = queue.Queue()
         self.running = True
-        
+
         # Start the dedicated browser thread
         self.thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.thread.start()
+
+    def _open_browser(self, playwright):
+        """
+        Browser session strategy (in priority order):
+          1. AGENT_CDP_URL set   → attach to an already-running browser
+             (Chrome started with --remote-debugging-port).  Enables
+             cloud-browser / manually-logged-in sessions.
+          2. Otherwise           → persistent local profile
+             (utils/chrome_profile) so logins survive restarts.
+        """
+        cdp_url = os.getenv('AGENT_CDP_URL')
+        headless = os.getenv('AGENT_HEADLESS', '0') == '1'
+        ua = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+              'AppleWebKit/537.36 (KHTML, like Gecko) '
+              'Chrome/120.0.0.0 Safari/537.36')
+
+        if cdp_url:
+            web_log(f"Agent: connecting over CDP → {cdp_url}")
+            browser = playwright.chromium.connect_over_cdp(cdp_url)
+            context = (browser.contexts[0] if browser.contexts
+                       else browser.new_context())
+        else:
+            os.makedirs(self.profile_dir, exist_ok=True)
+            web_log(f"Agent: launching persistent profile ({self.profile_dir})")
+            context = playwright.chromium.launch_persistent_context(
+                self.profile_dir,
+                headless=headless,
+                user_agent=ua,
+            )
+        page = context.pages[0] if context.pages else context.new_page()
+        return context, page
 
     def _worker_loop(self):
         """Runs in a separate thread to keep Playwright happy."""
         try:
             with sync_playwright() as p:
-                # Use a real User-Agent to avoid immediate bot detection
-                browser = p.chromium.launch(headless=False)
-                context = browser.new_context(
-                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                )
-                page = context.new_page()
+                context, page = self._open_browser(p)
                 
                 while self.running:
                     try:
@@ -71,6 +103,52 @@ class WebAgent:
                                 selector = args.get('selector')
                                 page.click(selector)
                                 result = "Clicked element."
+
+                            # ---------- DOM-aware actions ---------- #
+                            elif action == 'read_dom':
+                                result = self._read_dom(page, args)
+
+                            elif action == 'click_index':
+                                idx = int(args.get('index', -1))
+                                clicked = page.evaluate(
+                                    """(payload) => {
+                                        const els = [...document
+                                            .querySelectorAll(payload.sel)]
+                                            .filter(el => {
+                                                const r = el
+                                                    .getBoundingClientRect();
+                                                return r.width > 0 &&
+                                                       r.height > 0;
+                                            });
+                                        const el = els[payload.index];
+                                        if (!el) return false;
+                                        el.scrollIntoView({block: 'center'});
+                                        el.click();
+                                        return true;
+                                    }""",
+                                    {"sel": self.INTERACTIVE_SEL,
+                                     "index": idx},
+                                )
+                                if clicked:
+                                    try:
+                                        page.wait_for_load_state(
+                                            'domcontentloaded', timeout=8000)
+                                    except Exception:
+                                        pass
+                                    result = f"Clicked element #{idx}."
+                                else:
+                                    result = (f"No visible clickable "
+                                              f"element at index {idx}. "
+                                              "Use read_dom first.")
+
+                            elif action == 'page_text':
+                                max_chars = int(args.get('max_chars', 3000))
+                                text = page.evaluate(
+                                    "() => document.body.innerText")
+                                text = (text or '').strip()
+                                if len(text) > max_chars:
+                                    text = text[:max_chars] + "\n[truncated]"
+                                result = text or "(empty page)"
                                 
                             elif action == 'amazon_search':
                                 item = args.get('item')
@@ -189,12 +267,60 @@ class WebAgent:
                             
                     except queue.Empty:
                         continue
-                        
-                browser.close()
-                
+
+                # Persistent contexts and CDP sessions close via context
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
         except Exception as e:
             web_log(f"Agent Worker Crashed: {e}")
             print(f"Agent Worker Crashed: {e}")
+
+    def _read_dom(self, page, args):
+        """Compact outline of visible interactive elements + page meta."""
+        max_elems = int(args.get('max_elements', 40))
+        data = page.evaluate(
+            """(payload) => {
+                const out = [];
+                document.querySelectorAll(payload.sel).forEach(el => {
+                    if (out.length >= payload.max) return;
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) return;
+                    const text = (el.innerText || el.value ||
+                                  el.placeholder ||
+                                  el.getAttribute('aria-label') || '')
+                        .trim().replace(/\\s+/g, ' ').slice(0, 60);
+                    out.push({
+                        tag: el.tagName.toLowerCase(),
+                        text: text,
+                        id: el.id || '',
+                        name: el.getAttribute('name') || '',
+                        href: el.tagName === 'A'
+                            ? (el.getAttribute('href') || '').slice(0, 80)
+                            : ''
+                    });
+                });
+                return {title: document.title, url: location.href,
+                        elements: out};
+            }""",
+            {"sel": self.INTERACTIVE_SEL, "max": max_elems},
+        )
+        lines = [f"Page: {data.get('title', '')} ({data.get('url', '')})",
+                 f"Interactive elements (use click_index with the number):"]
+        for i, el in enumerate(data.get('elements', [])):
+            bits = [f"[{i}] <{el['tag']}>"]
+            if el['text']:
+                bits.append(f'"{el["text"]}"')
+            if el['id']:
+                bits.append(f"#{el['id']}")
+            if el['name']:
+                bits.append(f"name={el['name']}")
+            if el['href']:
+                bits.append(f"→ {el['href']}")
+            lines.append(" ".join(bits))
+        return "\n".join(lines)
 
     def _send_command(self, action, args=None):
         """Helper to send command and wait for result."""
@@ -231,6 +357,19 @@ class WebAgent:
 
     def click_element(self, selector):
         return self._send_command('click', {'selector': selector})
+
+    # ---------------- DOM-aware helpers ---------------- #
+    def read_dom(self, max_elements=40):
+        """Outline of visible interactive elements for reasoning."""
+        return self._send_command('read_dom', {'max_elements': max_elements})
+
+    def click_element_at(self, index):
+        """Click the nth visible interactive element (see read_dom)."""
+        return self._send_command('click_index', {'index': index})
+
+    def get_page_text(self, max_chars=3000):
+        """Readable text content of the current page."""
+        return self._send_command('page_text', {'max_chars': max_chars})
         
     def search_amazon(self, item):
         return self._send_command('amazon_search', {'item': item})

@@ -1,6 +1,10 @@
 import asyncio
-import threading
+import os
+import glob
 import logging
+import subprocess
+import tempfile
+import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from utils.tools import Tools
@@ -8,6 +12,39 @@ from utils.brain import Brain
 from utils.executor import JarvisExecutor
 
 from config import Config
+
+
+def _transcribe_audio_file(audio_path):
+    """
+    Speech-to-text for Telegram voice notes (OGG/Opus).
+
+    Converts to 16kHz mono WAV via ffmpeg, then uses the same Google
+    Web Speech backend as local mic input.  Raises on any failure.
+    """
+    import speech_recognition as sr
+
+    wav_fd, wav_path = tempfile.mkstemp(suffix='.wav')
+    os.close(wav_fd)
+    try:
+        conv = subprocess.run(
+            ['ffmpeg', '-y', '-loglevel', 'error',
+             '-i', audio_path, '-ar', '16000', '-ac', '1', wav_path],
+            capture_output=True, timeout=30,
+        )
+        if conv.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg conversion failed: {conv.stderr[:200]}")
+
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio = recognizer.record(source)
+        return recognizer.recognize_google(audio)
+    finally:
+        try:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+        except OSError:
+            pass
 
 
 class JarvisTeleBot:
@@ -74,27 +111,119 @@ class JarvisTeleBot:
         self._notify_chat_id = update.effective_chat.id
         await update.message.reply_text(self.executor.scheduler.list_reminders())
 
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _process_and_reply(self, update: Update,
+                                 context: ContextTypes.DEFAULT_TYPE, text: str,
+                                 kind: str = 'text', image_path=None):
+        """
+        Shared pipeline: publish a normalized event onto the integration
+        bus; the server-side handler thinks/executes (host-silent for
+        Telegram) and the reply lands back here.
+        """
+        self.logger.info(f"Telegram Message received ({kind}): {text[:80]}")
+        loop = asyncio.get_event_loop()
+        chat_id = update.effective_chat.id
+
+        def _reply(message):
+            asyncio.run_coroutine_threadsafe(
+                update.message.reply_text(str(message)[:4000]), loop)
+
+        from utils.event_bus import get_bus
+        bus = get_bus()
+
+        if kind == 'photo':
+            event = bus.from_telegram_photo(text, image_path=image_path,
+                                            chat_id=chat_id, reply=_reply)
+        elif kind == 'voice':
+            event = bus.from_telegram_voice(text, chat_id=chat_id,
+                                            reply=_reply)
+        else:
+            event = bus.from_telegram_text(text, chat_id=chat_id,
+                                           reply=_reply)
+
+        await loop.run_in_executor(None, lambda: bus.publish(event))
+
+    async def handle_message(self, update: Update,
+                             context: ContextTypes.DEFAULT_TYPE):
         """Processes regular text messages from Telegram."""
         if not await self._check_access(update):
             return
         self._notify_chat_id = update.effective_chat.id
+        await self._process_and_reply(update, context, update.message.text)
 
-        text = update.message.text
-        self.logger.info(f"Telegram Message received: {text}")
+    # ------------------------------------------------------------------ #
+    # Multimodal: voice notes + photos
+    # ------------------------------------------------------------------ #
+    async def handle_voice(self, update: Update,
+                           context: ContextTypes.DEFAULT_TYPE):
+        """Transcribes voice notes and runs them through the brain."""
+        if not await self._check_access(update):
+            return
+        self._notify_chat_id = update.effective_chat.id
 
-        # 1. Think
-        command = self.brain.think(text)
-
-        # 2. Execute remotely: don't speak aloud on the host machine
+        clip = update.message.voice or update.message.audio
+        if not clip:
+            return
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id,
+                                           action="typing")
+        fd, ogg_path = tempfile.mkstemp(suffix='.ogg')
+        os.close(fd)
         try:
-            self.executor.mouth.suppress = True
-            result = self.executor.execute_command(command, self.brain, original_text=text)
+            tg_file = await context.bot.get_file(clip.file_id)
+            await tg_file.download_to_drive(ogg_path)
+            text = await asyncio.get_event_loop().run_in_executor(
+                None, _transcribe_audio_file, ogg_path)
+        except Exception as e:
+            self.logger.error(f"Voice transcription failed: {e}")
+            await update.message.reply_text(
+                "I couldn't transcribe that voice note, Sir.")
+            return
         finally:
-            self.executor.mouth.suppress = False
+            for stale in [ogg_path] + glob.glob(ogg_path.replace(
+                    '.ogg', '*.wav')):
+                try:
+                    if os.path.exists(stale):
+                        os.remove(stale)
+                except OSError:
+                    pass
 
-        # 3. Reply back to Telegram
-        await update.message.reply_text(result)
+        if not text or not text.strip():
+            await update.message.reply_text("The voice note came back empty.")
+            return
+        await self._process_and_reply(update, context, text, kind='voice')
+
+    async def handle_photo(self, update: Update,
+                           context: ContextTypes.DEFAULT_TYPE):
+        """Analyzes photo messages through the vision pipeline."""
+        if not await self._check_access(update):
+            return
+        self._notify_chat_id = update.effective_chat.id
+
+        photo = update.message.photo[-1] if update.message.photo else None
+        if not photo:
+            return
+        caption = (update.message.caption or
+                   "What do you see in this image? Describe it concisely.")
+
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id,
+                                           action="upload_photo")
+        fd, img_path = tempfile.mkstemp(suffix='.jpg')
+        os.close(fd)
+        try:
+            tg_file = await context.bot.get_file(photo.file_id)
+            await tg_file.download_to_drive(img_path)
+            await self._process_and_reply(update, context, caption,
+                                          kind='photo',
+                                          image_path=img_path)
+        except Exception as e:
+            self.logger.error(f"Photo analysis failed: {e}")
+            await update.message.reply_text(
+                "I couldn't analyze that image, Sir.")
+        finally:
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ #
     # Reminder notifications (called from the scheduler thread)
@@ -134,6 +263,14 @@ class JarvisTeleBot:
 
             # Message Handler for Remote Control
             self.application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message))
+
+            # Multimodal handlers: voice notes + photos
+            self.application.add_handler(MessageHandler(
+                (filters.VOICE | filters.AUDIO) & (~filters.COMMAND),
+                self.handle_voice))
+            self.application.add_handler(MessageHandler(
+                filters.PHOTO & (~filters.COMMAND),
+                self.handle_photo))
 
             self.logger.info("Telegram Bot polling starting...")
             self.application.run_polling(stop_signals=False)

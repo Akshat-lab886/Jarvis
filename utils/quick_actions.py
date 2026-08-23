@@ -24,14 +24,24 @@ def _start_mission(goal, executor, brain, ui_callback=None):
     """Run a mission on a background thread so the caller never blocks."""
     def _run():
         try:
+            # Wire up task manager with current brain and callback
+            executor.task_manager.brain = brain
+            executor.task_manager.ui_callback = ui_callback or (lambda e, d: None)
+
             from utils.mission_control import MissionPlanner
             planner = MissionPlanner(executor=executor, brain=brain)
             executor.mouth.speak("Analyzing mission parameters, Sir.")
             count = planner.create_plan(goal)
+            if count == 0:
+                executor.mouth.speak("I couldn't break that into steps, Sir.")
+                if ui_callback:
+                    ui_callback('ai_text', {'text': 'Failed to generate a plan.'})
+                return
             msg = f"Plan generated with {count} steps. Executing now."
             executor.mouth.speak(msg)
             if ui_callback:
                 ui_callback('ai_text', {'text': f"Mission: {goal}\nSteps: {count}"})
+            # start_mission now waits for the ComplexTaskManager to finish
             summary = planner.start_mission()
             executor.mouth.speak(summary)
             if ui_callback:
@@ -351,6 +361,114 @@ def handle_quick_actions(text, executor, brain, ui_callback=None):
             from utils.gui_automator import Operator
             res = Operator().press_key(key_name)
             _speak(executor, res, ui_callback)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Meeting Mode
+    # ------------------------------------------------------------------ #
+    if "start meeting" in text_lower or "meeting mode" in text_lower:
+        result = executor.meeting.start_recording()
+        _speak(executor, result, ui_callback)
+        return True
+
+    if "stop meeting" in text_lower or "end meeting" in text_lower:
+        result = executor.meeting.stop_recording()
+        _speak(executor, result, ui_callback)
+        return True
+
+    if "meeting transcript" in text_lower or "what was said" in text_lower:
+        transcript = executor.meeting.get_live_transcript()
+        _speak(executor, transcript or "No transcript available yet.", ui_callback)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Fridge Vision
+    # ------------------------------------------------------------------ #
+    if "look at my fridge" in text_lower or "what can i cook" in text_lower or "analyze fridge" in text_lower:
+        executor.mouth.speak("Analyzing your fridge, Sir.")
+        result = executor.fridge.analyze_fridge()
+        if result.get('error'):
+            _speak(executor, result['error'], ui_callback)
+        else:
+            ingredients = result.get('ingredients', [])
+            recipes = result.get('recipes', [])
+            shopping = result.get('shopping_list', [])
+            msg = f"Found {len(ingredients)} ingredients."
+            if recipes:
+                msg += f" Suggested {len(recipes)} recipes."
+            if shopping:
+                msg += f" Shopping list ready."
+            _speak(executor, msg, ui_callback)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Relationship commands
+    # ------------------------------------------------------------------ #
+    if text_lower.startswith("my friend ") or text_lower.startswith("my mom") or \
+       text_lower.startswith("my dad") or text_lower.startswith("my brother") or \
+       text_lower.startswith("my sister") or text_lower.startswith("my wife") or \
+       text_lower.startswith("my husband") or text_lower.startswith("my partner"):
+        # Store relationship info
+        try:
+            executor.episodic.auto_capture(text)
+            _speak(executor, "Noted, Sir. I'll remember that.", ui_callback)
+        except Exception as e:
+            logger.error(f"Relationship capture error: {e}", exc_info=True)
+        return True
+
+    if "gift idea" in text_lower or "what should i get" in text_lower:
+        # Extract the person name
+        for prefix in ["gift idea for ", "what should i get ", "gift for "]:
+            if prefix in text_lower:
+                name = text_lower.split(prefix)[-1].strip().title()
+                suggestions = executor.relationships.get_gift_suggestions(name)
+                msg = f"Gift ideas for {name}: {', '.join(suggestions[:3])}"
+                _speak(executor, msg, ui_callback)
+                return True
+
+    # ------------------------------------------------------------------ #
+    # Triage & Privacy
+    # ------------------------------------------------------------------ #
+    if "what needs my attention" in text_lower or "message triage" in text_lower or "critical messages" in text_lower:
+        from utils.proactive import CrossAppTriage
+        triage = CrossAppTriage(secretary=executor.tools.secretary)
+        result = triage.get_triage_summary()
+        _speak(executor, result, ui_callback)
+        return True
+
+    if "privacy settings" in text_lower or "trust controls" in text_lower:
+        result = executor.privacy.get_trust_summary()
+        _speak(executor, result, ui_callback)
+        return True
+
+    if "schedule insights" in text_lower or "time blocks" in text_lower:
+        from utils.proactive import TimeBlockScheduler
+        blocker = TimeBlockScheduler(secretary=executor.tools.secretary)
+        suggestions = blocker.scan_and_adjust()
+        if suggestions:
+            lines = [s['message'] for s in suggestions[:5]]
+            _speak(executor, "\n".join(lines), ui_callback)
+        else:
+            _speak(executor, "Your schedule looks clear, Sir.", ui_callback)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Memory commands
+    # ------------------------------------------------------------------ #
+    if "recall" in text_lower and ("what do you know" in text_lower or "remember" in text_lower):
+        query = text_lower.replace("recall", "").replace("what do you know about", "").strip()
+        results = executor.episodic.search(query, limit=5)
+        if results:
+            msg = f"I found {len(results)} related memories. " + "; ".join(m['text'][:60] for m in results[:3])
+        else:
+            msg = f"I don't have specific memories about '{query}' yet."
+        _speak(executor, msg, ui_callback)
+        return True
+
+    if "memory stats" in text_lower or "how much do you remember" in text_lower:
+        stats = executor.episodic.stats()
+        msg = f"I have {stats['total']} memories across {len(stats['categories'])} categories."
+        _speak(executor, msg, ui_callback)
         return True
 
     return False

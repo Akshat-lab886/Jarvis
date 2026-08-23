@@ -1,10 +1,12 @@
 from utils.server import start_server, executor, brain, send_to_ui
 from utils.ear import Ear
 from config import Config
+import argparse
 import threading
 import time
 import signal
 import sys
+import os
 from utils.diagnostics import run_diagnostics
 
 def start_listening_loop():
@@ -66,17 +68,30 @@ def shutdown_system(signum, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
-    # Run System Diagnostics
+    parser = argparse.ArgumentParser(description="JARVIS Assistant")
+    parser.add_argument('--headless', action='store_true',
+                        help='Run without the local voice listener '
+                             '(dashboard/Telegram only — daemon friendly)')
+    args, _unknown = parser.parse_known_args()
+    headless = args.headless or os.getenv('JARVIS_HEADLESS') == '1'
+
+    # Run System Diagnostics (voice deps only matter in voice mode)
     if not run_diagnostics():
         print("System Diagnostics Failed. Aborting startup.")
         sys.exit(1)
 
     # Register Signal Handler
     signal.signal(signal.SIGINT, shutdown_system)
+    signal.signal(signal.SIGTERM, shutdown_system)
 
-    # Start Listener Thread
-    listener_thread = threading.Thread(target=start_listening_loop, daemon=True)
-    listener_thread.start()
+    if headless:
+        print("Starting JARVIS in HEADLESS daemon mode "
+              "(no microphone; dashboard + Telegram active).")
+    else:
+        # Start Listener Thread
+        listener_thread = threading.Thread(target=start_listening_loop,
+                                           daemon=True)
+        listener_thread.start()
 
     # Telegram Bot is initialized within start_server to manage process lifecycle
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.assistant</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PYTHON_BIN@</string>
+        <string>@PROJECT_DIR@/main.py</string>
+        <string>--headless</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@PROJECT_DIR@</string>
+
+    <!-- Auto-restart if it crashes; throttle restarts to every 30s -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>@LOG_FILE@</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG_FILE@</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>JARVIS_HEADLESS</key>
+        <string>1</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

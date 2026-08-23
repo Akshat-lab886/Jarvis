@@ -23,11 +23,15 @@ class _JsonStore:
     def __init__(self, filename):
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.file_path = os.path.join(self.base_dir, filename)
-        self._lock = threading.Lock()
+        # RLock so save() can safely be invoked while the lock is held
+        self._lock = threading.RLock()
         self._items = []
         self._load()
 
     def _load(self):
+        # Always reset first: a missing/unreadable file must not leave stale
+        # in-memory items behind (they'd surface as phantom todos/notes).
+        self._items = []
         try:
             if os.path.exists(self.file_path):
                 with open(self.file_path, 'r') as f:
@@ -142,12 +146,22 @@ class NotePad(_JsonStore):
             lines.append(f"#{it['id']} [{stamp}] {it['text']}")
         return "Your recent notes:\n" + "\n".join(lines)
 
+    def items_json(self, limit=50):
+        """Dashboard-friendly snapshot (most recent first)."""
+        with self._lock:
+            items = list(self._items)
+        return items[-limit:][::-1]
+
     def remove(self, keyword):
         kw = keyword.lower().strip()
+        removed = None
         with self._lock:
             for it in self._items:
                 if str(it['id']) == kw or kw in it['text'].lower():
                     self._items.remove(it)
-                    self._save()
-                    return f"Deleted note: {it['text'][:60]}"
-        return f"I couldn't find a note matching '{keyword}'."
+                    removed = it
+                    break
+        if removed is None:
+            return f"I couldn't find a note matching '{keyword}'."
+        self._save()
+        return f"Deleted note: {removed['text'][:60]}"

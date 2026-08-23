@@ -44,7 +44,6 @@ class Mouth:
             try:
                 text = self._play_queue.get(timeout=1)
             except queue.Empty:
-                # Nothing queued -> nothing playing
                 with self._lock:
                     self.is_speaking = False
                 continue
@@ -57,9 +56,13 @@ class Mouth:
                 logger.error(f"Speech playback error: {e}")
             finally:
                 self._play_queue.task_done()
-                # If more items are queued, keep is_speaking True; else reset
                 with self._lock:
                     self.is_speaking = not self._play_queue.empty()
+
+    # Maximum characters to speak — long responses are truncated so the
+    # voice finishes quickly.  The full text is already visible on the
+    # dashboard.
+    MAX_SPEECH_CHARS = 200
 
     def speak(self, text):
         if not text:
@@ -71,42 +74,53 @@ class Mouth:
         except Exception:
             pass
 
-        logger.info(f"Speaking: {text}")
+        logger.info(f"Speaking: {text[:80]}...")
 
         if self.suppress:
-            # Remote channel: acknowledge but stay silent locally
             return
 
         if not self.audio_available:
             return
 
+        # Truncate long responses for faster speech
+        speak_text = text[:self.MAX_SPEECH_CHARS]
+        if len(text) > self.MAX_SPEECH_CHARS:
+            speak_text += '...'
+
         self._ensure_worker()
-        self._play_queue.put(text)
+        self._play_queue.put(speak_text)
 
     def _generate_and_play(self, text):
-        output_file = "response.mp3"
-        voice = "en-US-ChristopherNeural"
-
         import edge_tts
 
-        async def _generate_tts():
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(output_file)
+        voice = "en-US-ChristopherNeural"
+        output_file = os.path.join(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))), 'response.mp3')
 
+        # --- Stream TTS: collect audio chunks then write once ---
         try:
-            # Never use asyncio.run() here: it crashes with "cannot be called
-            # from a running event loop" when speak() is triggered from a thread
-            # that already owns a loop (e.g. the Telegram bot thread). A fresh
-            # loop is always safe, even nested inside another running loop.
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(_generate_tts())
+                async def _collect_chunks():
+                    chunks = []
+                    communicate = edge_tts.Communicate(text, voice)
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio" and "data" in chunk:
+                            chunks.append(chunk["data"])
+                    return chunks
+                audio_chunks = loop.run_until_complete(_collect_chunks())
             finally:
                 loop.close()
-            if not os.path.exists(output_file):
-                logger.error("TTS Error: Output file not created.")
+
+            if not audio_chunks:
+                logger.error("TTS: No audio chunks received.")
                 return
-            logger.info(f"TTS generated: {output_file} ({os.path.getsize(output_file)} bytes)")
+
+            with open(output_file, 'wb') as f:
+                for c in audio_chunks:
+                    f.write(c)
+
+            logger.info(f"TTS: {os.path.getsize(output_file)} bytes")
         except Exception as e:
             logger.error(f"TTS Generation Error: {e}")
             return
@@ -124,5 +138,5 @@ class Mouth:
         try:
             from utils.server import send_to_ui
             send_to_ui('status', {'message': 'Online'})
-        except Exception:
+        except Exception as e:
             pass

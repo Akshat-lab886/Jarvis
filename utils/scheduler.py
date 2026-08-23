@@ -50,13 +50,22 @@ class ReminderScheduler:
         self._next_id = 1
         self._running = False
         self._thread = None
+        # Recently fired reminders, keyed by id, so the dashboard's Snooze
+        # button can reschedule them even after they were removed from the queue.
+        self._last_fired = {}
 
-        self._load()
+        # Do NOT load persisted reminders — reminders should only fire when
+        # the user explicitly tells Jarvis to set one.
+        self._clear_persisted()
 
     # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
     def _load(self):
+        # Always reset first: if the file is missing, unreadable or invalid,
+        # stale in-memory reminders must not survive (they'd fire anyway).
+        self._reminders = []
+        self._next_id = 1
         try:
             if os.path.exists(self.file_path):
                 with open(self.file_path, 'r') as f:
@@ -65,6 +74,16 @@ class ReminderScheduler:
                 self._next_id = data.get('next_id', 1)
         except Exception as e:
             print(f"Scheduler: Failed to load reminders: {e}")
+
+    def _clear_persisted(self):
+        """Remove any saved reminders so old ones don't auto-fire on startup."""
+        self._reminders = []
+        self._next_id = 1
+        try:
+            if os.path.exists(self.file_path):
+                os.remove(self.file_path)
+        except Exception:
+            pass
 
     def _save(self):
         try:
@@ -242,6 +261,10 @@ class ReminderScheduler:
 
         self._save()
 
+        # Auto-start the background polling loop only when a reminder is
+        # explicitly set — no polling until the user asks.
+        self.start()
+
         when = due.strftime("%A, %I:%M %p")
         repeat_note = " (repeats daily)" if repeat_daily else ""
         return f"Reminder set: {what} at {when}{repeat_note}."
@@ -295,9 +318,18 @@ class ReminderScheduler:
     def _fire(self, reminder):
         msg = f"⏰ Reminder: {reminder['text']}"
         print(f"Scheduler: {msg}")
+        # Keep a copy so the dashboard can snooze it after it fires
+        with self._lock:
+            self._last_fired[reminder['id']] = dict(reminder)
+            if len(self._last_fired) > 20:
+                oldest = min(self._last_fired)
+                del self._last_fired[oldest]
         try:
             from utils.server import send_to_ui
             send_to_ui('ai_text', {'text': msg})
+            # Dedicated notification event so the dashboard can show a
+            # Snooze/Dismiss toast.
+            send_to_ui('reminder_fired', {'id': reminder['id'], 'text': reminder['text']})
         except Exception:
             pass
         if self.mouth is not None:
@@ -310,6 +342,37 @@ class ReminderScheduler:
                 self.on_fire(reminder)
             except Exception as e:
                 print(f"Scheduler: on_fire hook failed: {e}")
+
+    def snooze(self, reminder_id, minutes=10):
+        """
+        Reschedules a fired (or pending) reminder by id for `minutes` from now.
+        """
+        try:
+            reminder_id = int(reminder_id)
+        except (TypeError, ValueError):
+            return "Invalid reminder id for snooze."
+        minutes = max(1, int(minutes))
+
+        reminder = None
+        with self._lock:
+            for r in self._reminders:
+                if r['id'] == reminder_id:
+                    reminder = r
+                    break
+            if reminder is None and reminder_id in self._last_fired:
+                reminder = dict(self._last_fired[reminder_id])
+                reminder.pop('due', None)
+            if reminder is not None and reminder in self._reminders:
+                self._reminders.remove(reminder)
+
+        if reminder is None:
+            return f"I couldn't find a reminder with id {reminder_id} to snooze."
+
+        reminder['due'] = (datetime.datetime.now() + datetime.timedelta(minutes=minutes)).isoformat()
+        with self._lock:
+            self._reminders.append(reminder)
+        self._save()
+        return f"Snoozed '{reminder['text']}' for {minutes} minutes."
 
     # ------------------------------------------------------------------ #
     # Background loop

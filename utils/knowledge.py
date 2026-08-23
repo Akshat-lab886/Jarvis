@@ -1,8 +1,13 @@
 import os
+import threading
+import time
 from pypdf import PdfReader
 import chromadb
-import time
 from chromadb.utils import embedding_functions
+
+# Native ML libs (torch/hnswlib) can hang on broken installs; a hang
+# raises nothing, so init runs under a watchdog thread instead.
+_INIT_TIMEOUT = 30
 
 class Librarian:
     """
@@ -10,24 +15,65 @@ class Librarian:
     """
     def __init__(self):
         print("Initializing Librarian (Vector Vault)...")
-        try:
-            # Persistent Client
-            self.client = chromadb.PersistentClient(path="./knowledge_vault")
-            
-            # Use a lightweight, open-source embedding model
-            # defaulting to all-MiniLM-L6-v2 which is standard and fast
-            self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2" 
-            )
-            
-            self.collection = self.client.get_or_create_collection(
-                name="jarvis_knowledge",
-                embedding_function=self.embedding_fn
-            )
-            print(f"Librarian initialized. Knowledge Count: {self.collection.count()}")
-        except Exception as e:
-            print(f"Librarian Initialization Error: {e}")
-            self.collection = None
+        self.client = None
+        self.embedding_fn = None
+        self.collection = None
+        # ready flips True only after a successful init; lets callers
+        # (auto-RAG) skip instantly instead of blocking on a broken stack
+        self.ready = False
+
+        # Hard kill-switch: on machines with broken native ML libs the
+        # chromadb call HANGS WITHOUT RELEASING THE GIL, freezing every
+        # thread (watchdogs can't help).  Respect the switch BEFORE any
+        # heavy import.
+        if os.getenv('JARVIS_DISABLE_VECTOR') == '1':
+            print("Librarian: disabled via JARVIS_DISABLE_VECTOR "
+                  "(keyword-only mode).")
+            return
+
+        outcome = {}
+
+        def _build():
+            try:
+                # Cheap sentinel: torch must at least import cleanly
+                # before we invest in chroma + embeddings.
+                import torch  # noqa: F401
+                # Persistent Client
+                client = chromadb.PersistentClient(path="./knowledge_vault")
+
+                # Lightweight, open-source embedding model (all-MiniLM-L6-v2)
+                emb_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
+
+                collection = client.get_or_create_collection(
+                    name="jarvis_knowledge",
+                    embedding_function=emb_fn,
+                )
+                outcome['client'] = client
+                outcome['embedding_fn'] = emb_fn
+                outcome['collection'] = collection
+                outcome['count'] = collection.count()
+            except Exception as e:
+                outcome['error'] = str(e)
+
+        builder = threading.Thread(target=_build, daemon=True,
+                                   name="librarian-init")
+        builder.start()
+        builder.join(timeout=_INIT_TIMEOUT)
+
+        if builder.is_alive():
+            print(f"Librarian: initialization TIMED OUT "
+                  f"(>{_INIT_TIMEOUT}s) — vault disabled this session. "
+                  f"(Check torch/chromadb install: JARVIS_DISABLE_VECTOR=1 silences this.)")
+        elif 'error' in outcome:
+            print(f"Librarian Initialization Error: {outcome['error']}")
+        else:
+            self.client = outcome['client']
+            self.embedding_fn = outcome['embedding_fn']
+            self.collection = outcome['collection']
+            self.ready = True
+            print(f"Librarian initialized. Knowledge Count: {outcome['count']}")
 
     def read_pdf(self, file_path):
         """Extract text from PDF."""

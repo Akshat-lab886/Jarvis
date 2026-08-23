@@ -13,9 +13,9 @@ def run_diagnostics():
     all_clear = True
     
     # 1. Environment Check
-    llm_keys = [k for k in ["OPENROUTER_API_KEY", "GOOGLE_API_KEY"] if os.getenv(k)]
+    llm_keys = [k for k in ["GROQ_API_KEY", "GOOGLE_API_KEY"] if os.getenv(k)]
     if not llm_keys:
-        print("\033[91mCRITICAL WARNING: No LLM API key found. Set OPENROUTER_API_KEY or GOOGLE_API_KEY in .env or Jarvis cannot think.\033[0m")
+        print("\033[91mCRITICAL WARNING: No LLM API key found. Set GROQ_API_KEY or GOOGLE_API_KEY in .env or Jarvis cannot think.\033[0m")
     else:
         print(f"[\033[92mOK\033[0m] LLM API keys found ({', '.join(llm_keys)}).")
 

@@ -4,7 +4,7 @@ Jarvis Desktop Agent (v18)
 Gives Jarvis eyes and hands on the user's desktop:
 
 - Captures the screen with pyautogui and downscales it for the vision model.
-- Asks the vision model (Gemini, with OpenRouter vision fallback) for the
+- Asks the vision model (Gemini, with Groq vision fallback) for the
   next single action as JSON: click / type / key / done.
 - Scales model coordinates back to the real screen resolution and executes
   with pyautogui.
@@ -74,16 +74,22 @@ class DesktopAgent:
     # Vision model calls
     # ------------------------------------------------------------------ #
     def _ask_gemini(self, prompt, image):
-        import google.generativeai as genai
-        genai.configure(api_key=Config.GOOGLE_API_KEY)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL, system_instruction=SYSTEM_PROMPT)
-        resp = model.generate_content([prompt, image])
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=Config.GOOGLE_API_KEY)
+        resp = client.models.generate_content(
+            model=Config.GEMINI_MODEL,
+            contents=[prompt, image],
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+            ),
+        )
         return resp.text
 
-    def _ask_openrouter(self, prompt, image_b64):
+    def _ask_groq(self, prompt, image_b64):
         from openai import OpenAI
-        client = OpenAI(base_url="https://openrouter.ai/api/v1",
-                        api_key=Config.OPENROUTER_API_KEY)
+        client = OpenAI(base_url="https://api.groq.com/openai/v1",
+                        api_key=Config.GROQ_API_KEY)
         # Prefer a vision-capable model from the configured list
         vision = [m for m in Config.MODELS if any(v in m for v in ('vl', 'vision', 'gemini', 'dots', 'gpt-4o'))]
         model = (vision or Config.MODELS or ["nvidia/nemotron-nano-12b-v2-vl:free"])[0]
@@ -102,7 +108,7 @@ class DesktopAgent:
         if Config.GOOGLE_API_KEY:
             img = Image.open(io.BytesIO(base64.b64decode(image_b64)))
             return self._ask_gemini(prompt, img)
-        return self._ask_openrouter(prompt, image_b64)
+        return self._ask_groq(prompt, image_b64)
 
     # ------------------------------------------------------------------ #
     # Action parsing & execution
@@ -147,8 +153,8 @@ class DesktopAgent:
     # Main loop
     # ------------------------------------------------------------------ #
     def run_task(self, task, max_steps=None):
-        if not Config.GOOGLE_API_KEY and not Config.OPENROUTER_API_KEY:
-            return "Error: No vision model configured (need GOOGLE_API_KEY or OPENROUTER_API_KEY)."
+        if not Config.GOOGLE_API_KEY and not Config.GROQ_API_KEY:
+            return "Error: No vision model configured (need GOOGLE_API_KEY or GROQ_API_KEY)."
 
         max_steps = max_steps or Config.DESKTOP_AGENT_MAX_STEPS
         log = []
