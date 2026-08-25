@@ -1,506 +1,308 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>J.A.R.V.I.S. | System Monitor</title>
-    <!-- Sci-fi Fonts -->
+    <title>J.A.R.V.I.S. · OPS DECK</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=5">
-    <!-- FontAwesome for Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=7">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
-
 <body>
-    <div class="hud-overlay"></div> <!-- Grid pattern overlay -->
-    <div class="panel-backdrop" id="panel-backdrop"></div> <!-- Panel overlay -->
+<div class="panel-backdrop" id="panel-backdrop"></div>
 
-    <div class="container">
-        <!-- Header: System Status -->
-        <header class="hud-header">
-            <div class="status-panel glass">
-                <span class="label">SYSTEM STATUS</span>
-                <span class="value online">ONLINE</span>
-            </div>
+<div class="container">
 
-            <nav class="nav-clusters" id="nav-clusters">
-                <div class="nav-cluster glass" data-cluster="assist">
-                    <span class="cluster-label">ASSIST</span>
-                    <div class="cluster-btns">
-                        <div class="nav-trigger glass" id="vision-btn" title="Analyze Screen">
-                            <i class="fa-solid fa-eye"></i> <span>VISION</span>
-                        </div>
-                        <div class="nav-trigger glass" id="meeting-btn" title="Meeting Mode">
-                            <i class="fa-solid fa-microphone-lines"></i> <span>MEETING</span>
-                        </div>
-                        <div class="nav-trigger glass" id="tasks-btn" title="To-Do List">
-                            <i class="fa-solid fa-list-check"></i> <span>TASKS</span>
-                        </div>
-                        <div class="nav-trigger glass" id="notes-btn" title="Notes">
-                            <i class="fa-solid fa-note-sticky"></i> <span>NOTES</span>
-                        </div>
-                    </div>
-                </div>
+    <!-- ═══ STATUS STRIP ═══ -->
+    <header class="strip">
+        <div class="strip-cell"><span class="dot"></span><span class="lbl">JARVIS</span><span id="strip-status" class="online">ONLINE</span></div>
+        <div class="strip-cell num" id="strip-clock">--:--:--</div>
+        <div class="strip-cell"><span class="lbl">UP</span><span class="num" id="strip-up">—</span></div>
+        <div class="strip-cell"><span class="lbl">BUD</span><span class="num" id="w-budget-text">$0.00/5.00</span></div>
+        <div class="strip-cell"><span class="lbl">GUARD</span><span id="w-guard">—</span></div>
+        <div class="strip-cell" id="status">SYSTEMS NOMINAL</div>
+        <div id="listening-indicator" style="display:none;"></div>
+        <div class="strip-cell spacer"></div>
+        <nav class="fnav" id="fnav">
+            <button data-code="VIS" id="vision-btn" title="Vision">VIS</button>
+            <button data-code="MTG" id="meeting-btn" title="Meeting">MTG</button>
+            <button data-code="TSK" id="tasks-btn" title="Tasks">TSK</button>
+            <button data-code="NTS" id="notes-btn" title="Notes">NTS</button>
+            <span class="sep"></span>
+            <button data-code="LIB" id="librarian-btn" title="Knowledge">LIB</button>
+            <button data-code="MEM" id="memory-btn" title="Memory">MEM</button>
+            <button data-code="PPL" id="people-btn" title="People">PPL</button>
+            <span class="sep"></span>
+            <button data-code="DEV" id="dev-btn" title="Dev mode">DEV</button>
+            <button data-code="SEC" id="privacy-btn" title="Privacy">SEC</button>
+            <button data-code="LLM" id="llm-btn" title="AI providers">LLM</button>
+            <button data-code="SKL" id="skills-btn" title="Skills">SKL</button>
+            <button data-code="PAL" id="palette-btn" title="Palette (⌘K)">⌘K</button>
+        </nav>
+    </header>
 
-                <div class="nav-cluster glass" data-cluster="data">
-                    <span class="cluster-label">DATA</span>
-                    <div class="cluster-btns">
-                        <div class="nav-trigger glass" id="librarian-btn" title="Feed Knowledge">
-                            <i class="fa-solid fa-book"></i> <span>LIBRARIAN</span>
-                        </div>
-                        <div class="nav-trigger glass" id="memory-btn" title="Memory">
-                            <i class="fa-solid fa-brain"></i> <span>MEMORY</span>
-                        </div>
-                        <div class="nav-trigger glass" id="people-btn" title="People">
-                            <i class="fa-solid fa-users"></i> <span>PEOPLE</span>
-                        </div>
-                    </div>
-                </div>
+    <!-- ═══ SYSTEM RAIL ═══ -->
+    <aside class="system" id="vitals-panel">
+        <div class="rail-head"><span>SYSTEM</span><span class="num" id="vitals-time">--:--:--</span></div>
 
-                <div class="nav-cluster glass" data-cluster="ops">
-                    <span class="cluster-label">OPS</span>
-                    <div class="cluster-btns">
-                        <div class="nav-trigger glass" id="dev-btn" title="Developer Focus">
-                            <i class="fa-solid fa-code"></i> <span>DEV MODE</span>
-                        </div>
-                        <div class="nav-trigger glass" id="privacy-btn" title="Privacy">
-                            <i class="fa-solid fa-shield-halved"></i> <span>PRIVACY</span>
-                        </div>
-                        <div class="nav-trigger glass" id="approvals-btn" title="Approvals">
-                            <i class="fa-solid fa-check-double"></i> <span>APPROVALS</span>
-                        </div>
-                        <div class="nav-trigger glass" id="missions-btn" title="Active Missions">
-                            <i class="fa-solid fa-rocket"></i> <span>MISSIONS</span>
-                        </div>
-                        <div class="nav-trigger glass" id="automations-btn" title="Recurring Automations">
-                            <i class="fa-solid fa-repeat"></i> <span>AUTOMATIONS</span>
-                        </div>
-                        <div class="nav-trigger glass" id="skills-btn" title="Skills & Tools">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> <span>SKILLS</span>
-                        </div>
-                    </div>
-                </div>
-
-                <button class="nav-overflow-btn glass" id="nav-more-btn" title="All panels">
-                    <i class="fa-solid fa-grip"></i>
-                </button>
-            </nav>
-        </header>
-
-        <!-- Panel launcher overlay (small screens / overflow) -->
-        <div class="nav-launcher glass" id="nav-launcher" style="display:none;">
-            <div class="panel-header">
-                <i class="fa-solid fa-grip"></i> <span>PANELS</span>
-                <button class="close-btn" id="nav-launcher-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="launcher-grid">
-                <button class="launcher-item" data-panel="memory-panel"><i class="fa-solid fa-brain"></i><span>MEMORY</span></button>
-                <button class="launcher-item" data-panel="people-panel"><i class="fa-solid fa-users"></i><span>PEOPLE</span></button>
-                <button class="launcher-item" data-panel="meeting-panel"><i class="fa-solid fa-microphone-lines"></i><span>MEETING</span></button>
-                <button class="launcher-item" data-panel="privacy-panel"><i class="fa-solid fa-shield-halved"></i><span>PRIVACY</span></button>
-                <button class="launcher-item" data-panel="approvals-panel"><i class="fa-solid fa-check-double"></i><span>APPROVALS</span></button>
-                <button class="launcher-item" data-panel="missions-panel"><i class="fa-solid fa-rocket"></i><span>MISSIONS</span></button>
-                <button class="launcher-item" data-panel="automations-panel"><i class="fa-solid fa-repeat"></i><span>AUTOMATIONS</span></button>
-                <button class="launcher-item" data-panel="capabilities-panel"><i class="fa-solid fa-wand-magic-sparkles"></i><span>SKILLS</span></button>
-                <button class="launcher-item" data-panel="notes-panel"><i class="fa-solid fa-note-sticky"></i><span>NOTES</span></button>
-                <button class="launcher-item" data-panel="tasks-panel"><i class="fa-solid fa-list-check"></i><span>TASKS</span></button>
-                <button class="launcher-item" data-panel="librarian-panel"><i class="fa-solid fa-book"></i><span>LIBRARIAN</span></button>
-            </div>
+        <div class="reactor">
+            <div class="dial"><div class="core" id="core"></div></div>
         </div>
 
-        <!-- Automations Panel -->
-        <div class="librarian-panel glass" id="automations-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-repeat"></i> <span>RECURRING AUTOMATIONS</span>
-                <button class="close-btn" id="automations-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="task-input-row">
-                <input type="text" id="automation-input"
-                       placeholder='every weekday at 9am give me my briefing'
-                       autocomplete="off">
-                <button class="feed-btn task-add-btn" id="automation-add-btn" title="Schedule">
-                    <i class="fa-solid fa-plus"></i>
-                </button>
-            </div>
-            <div class="file-list" id="automation-list">
-                <!-- Automations render here -->
-            </div>
+        <div class="vitals">
+            <div class="vital"><span class="vl">CPU</span><span class="vbar"><i id="cpu-bar"></i></span><span class="vv num" id="cpu-value">0%</span></div>
+            <div class="vital"><span class="vl">RAM</span><span class="vbar"><i id="ram-bar"></i></span><span class="vv num" id="ram-value">0%</span></div>
+            <div class="vital"><span class="vl">BAT</span><span class="vbar batt"><i id="battery-bar" style="width:100%"></i></span><span class="vv num" id="battery-value">100%</span></div>
+            <div class="vital"><span class="vl">DSK</span><span class="vbar"><i id="disk-bar"></i></span><span class="vv num" id="disk-value">0%</span></div>
         </div>
 
-        <!-- Capabilities Panel (Skills + Tools) -->
-        <div class="librarian-panel glass" id="capabilities-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> <span>CAPABILITIES</span>
-                <button class="close-btn" id="capabilities-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="missions-tabs">
-                <button class="missions-tab active" data-cab-tab="skills">SKILLS</button>
-                <button class="missions-tab" data-cab-tab="tools">TOOLS</button>
-            </div>
-            <div class="cab-tab-content" id="cab-skills-tab">
-                <div class="file-list" id="skills-list"><!-- skills --></div>
-            </div>
-            <div class="cab-tab-content" id="cab-tools-tab" style="display:none;">
-                <div class="file-list" id="tools-list"><!-- tools --></div>
-            </div>
+        <div class="spark">
+            <span class="sl">CPU 30s</span>
+            <svg id="spark-cpu" width="120" height="18" viewBox="0 0 120 18" preserveAspectRatio="none"><polyline points="" fill="none" stroke="var(--accent)" stroke-width="1"/></svg>
+        </div>
+        <div class="spark">
+            <span class="sl">RAM 30s</span>
+            <svg id="spark-ram" width="120" height="18" viewBox="0 0 120 18" preserveAspectRatio="none"><polyline points="" fill="none" stroke="var(--text-2)" stroke-width="1"/></svg>
         </div>
 
-        <!-- Toast stack -->
-        <div class="toast-stack" id="toast-stack"></div>
+        <div class="rail-head" style="border-top:1px solid var(--line);"><span>STATE</span></div>
+        <div class="kv"><span class="k">MISSIONS</span><span class="v num" id="stat-tasks">0</span></div>
+        <div class="kv"><span class="k">SKILLS</span><span class="v num" id="stat-skills">0</span></div>
+        <div class="kv"><span class="k">MEMORIES</span><span class="v num" id="stat-mems">0</span></div>
+        <div class="kv"><span class="k">NEXT FIRE</span><span class="v acc" id="stat-next">—</span></div>
+        <div class="kv"><span class="k">TOKENS</span><span class="v num" id="w-budget-tok">0</span></div>
 
-        <!-- Memory Panel -->
-        <div class="librarian-panel glass" id="memory-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-brain"></i> <span>EPISODIC MEMORY</span>
-                <button class="close-btn" id="memory-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="task-input-row">
-                <input type="text" id="memory-input" placeholder="Remember something..." autocomplete="off">
-                <select id="memory-category">
-                    <option value="fact">Fact</option>
-                    <option value="preference">Preference</option>
-                    <option value="health">Health</option>
-                    <option value="goal">Goal</option>
-                    <option value="context">Context</option>
-                    <option value="routine">Routine</option>
-                </select>
-                <button class="feed-btn task-add-btn" id="memory-add-btn"><i class="fa-solid fa-plus"></i></button>
-            </div>
-            <div class="file-list" id="memory-list">
-                <!-- Memories render here -->
-            </div>
-            <div id="memory-stats"></div>
-            <div class="task-input-row" style="margin-top:12px;">
-                <input type="text" id="transcript-search-input" placeholder="Search past conversations..." autocomplete="off">
-                <button class="feed-btn task-add-btn" id="transcript-search-btn" title="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
-            </div>
-            <div class="file-list" id="transcript-results"></div>
+        <div class="clock num" id="rail-clock">--:--:--</div>
+
+        <div class="theme-switcher" id="theme-switcher">
+            <div class="theme-dot active" data-theme="midnight" title="Amber"></div>
+            <div class="theme-dot" data-theme="command" title="Phosphor"></div>
+            <div class="theme-dot" data-theme="brutalist" title="Alert"></div>
+            <div class="theme-dot" data-theme="zen" title="Zen"></div>
+            <div class="theme-dot" data-theme="vault" title="Vault"></div>
         </div>
+    </aside>
 
-        <!-- People Panel -->
-        <div class="librarian-panel glass" id="people-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-users"></i> <span>RELATIONSHIPS</span>
-                <button class="close-btn" id="people-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="task-input-row">
-                <input type="text" id="person-name-input" placeholder="Name" autocomplete="off">
-                <input type="text" id="person-rel-input" placeholder="Relationship" autocomplete="off">
-                <button class="feed-btn task-add-btn" id="person-add-btn"><i class="fa-solid fa-plus"></i></button>
-            </div>
-            <div class="file-list" id="people-list">
-                <!-- People render here -->
-            </div>
+    <!-- ═══ TRANSCRIPT ═══ -->
+    <main class="feed">
+        <div class="rail-head"><span>TRANSCRIPT</span><span>⌘K COMMANDS</span></div>
+        <div id="message-container" class="feed-scroll">
+            <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">JARVIS OPS DECK — awaiting input, Sir. ⌘K for commands.</span></div>
         </div>
+    </main>
 
-        <!-- Meeting Panel -->
-        <div class="librarian-panel glass" id="meeting-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-microphone-lines"></i> <span>MEETING MODE</span>
-                <button class="close-btn" id="meeting-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="meeting-controls">
-                <div id="meeting-status">Ready to record</div>
-                <button class="feed-btn meeting-start" id="meeting-start-btn">
-                    <i class="fa-solid fa-circle"></i> START RECORDING
-                </button>
-                <button class="feed-btn meeting-stop" id="meeting-stop-btn">
-                    <i class="fa-solid fa-stop"></i> STOP & PROCESS
-                </button>
-            </div>
-            <div class="file-list meeting-transcript" id="meeting-transcript">
-                <!-- Live transcript -->
-            </div>
-        </div>
+    <!-- ═══ OPERATIONS RAIL ═══ -->
+    <aside class="ops" id="ops-rail">
 
-        <!-- Approvals Panel -->
-        <div class="librarian-panel glass" id="approvals-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-check-double"></i> <span>APPROVALS</span>
-                <button class="close-btn" id="approvals-close"><i class="fa-solid fa-xmark"></i></button>
+        <div class="ops-stack" id="stack-missions">
+            <div class="ops-head">
+                <span>MISSIONS</span>
+                <span><span class="act" id="mis-tab-active">ACT</span> / <span class="act" id="mis-tab-hist">HIST</span></span>
             </div>
-            <div class="file-list" id="approvals-list">
-                <!-- Pending approvals render here -->
-            </div>
-        </div>
-
-        <!-- Privacy Panel -->
-        <div class="librarian-panel glass" id="privacy-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-shield-halved"></i> <span>PRIVACY & TRUST</span>
-                <button class="close-btn" id="privacy-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="file-list" id="privacy-settings">
-                <!-- Privacy settings render here -->
-            </div>
-        </div>
-
-        <!-- Missions / Complex Tasks Panel -->
-        <div class="librarian-panel glass" id="missions-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-rocket"></i> <span>MISSIONS</span>
-                <button class="close-btn" id="missions-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="missions-tabs">
-                <button class="missions-tab active" data-tab="active">ACTIVE</button>
-                <button class="missions-tab" data-tab="history">HISTORY</button>
-            </div>
-            <div class="missions-tab-content" id="missions-active-tab">
-                <div id="missions-list">
-                    <!-- Active tasks render here -->
-                </div>
-            </div>
-            <div class="missions-tab-content" id="missions-history-tab" style="display:none;">
+            <div class="ops-body" id="missions-list"></div>
+            <div class="ops-body" id="missions-history-wrap" style="display:none">
                 <div id="missions-history-stats"></div>
-                <div id="missions-history-list">
-                    <!-- History tasks render here -->
-                </div>
+                <div id="missions-history-list"></div>
             </div>
         </div>
 
-        <!-- Notes Panel -->
-        <div class="librarian-panel glass" id="notes-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-note-sticky"></i> <span>NOTES</span>
-                <button class="close-btn" id="notes-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="task-input-row">
-                <input type="text" id="note-input" placeholder="Write a note..." autocomplete="off">
-                <button class="feed-btn task-add-btn" id="note-add-btn"><i class="fa-solid fa-plus"></i></button>
-            </div>
-            <div class="file-list" id="note-list">
-                <!-- Notes render here -->
+        <div class="ops-stack" id="stack-approvals">
+            <div class="ops-head"><span>APPROVALS</span><span class="act" id="approvals-refresh">SYNC</span></div>
+            <div class="ops-body" id="approvals-list"></div>
+        </div>
+
+        <div class="ops-stack" id="stack-automations">
+            <div class="ops-head"><span>AUTOMATIONS</span><span class="act" id="automations-refresh">SYNC</span></div>
+            <div class="ops-body" id="automation-list"></div>
+            <div class="aut-add">
+                <input type="text" id="automation-input" placeholder='every day at 9am …' autocomplete="off">
+                <button id="automation-add-btn">ADD</button>
             </div>
         </div>
 
-        <!-- Reminder Notification Toast -->
-        <div class="reminder-toast glass" id="reminder-toast" style="display: none;">
-            <div class="reminder-toast-header">
-                <i class="fa-solid fa-bell"></i> <span>REMINDER</span>
-            </div>
-            <div class="reminder-toast-text" id="reminder-toast-text"></div>
-            <div class="reminder-toast-actions">
-                <button class="reminder-snooze-btn" id="reminder-snooze-btn">
-                    <i class="fa-solid fa-clock-rotate-left"></i> SNOOZE 10M
-                </button>
-                <button class="reminder-dismiss-btn" id="reminder-dismiss-btn">
-                    <i class="fa-solid fa-check"></i> DISMISS
-                </button>
-            </div>
+    </aside>
+
+    <!-- ═══ COMMAND + TICKER ═══ -->
+    <div class="cmdzone">
+        <div class="cmd" id="cmd-wrap">
+            <span class="prompt">&gt;</span>
+            <input type="text" id="chat-input" placeholder="type a command" autocomplete="off">
+            <span class="cursor" id="cmd-cursor">▮</span>
+            <button id="send-btn">SEND</button>
         </div>
-
-        <!-- To-Do List Panel -->
-        <div class="librarian-panel glass" id="tasks-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-list-check"></i> <span>TO-DO LIST</span>
-                <button class="close-btn" id="tasks-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="task-input-row">
-                <input type="text" id="task-input" placeholder="Add a task..." autocomplete="off">
-                <button class="feed-btn task-add-btn" id="task-add-btn"><i class="fa-solid fa-plus"></i></button>
-            </div>
-            <div class="file-list" id="task-list">
-                <!-- Tasks render here -->
-            </div>
-            <button class="feed-btn study-btn" id="task-clear-btn"
-                style="background: var(--neon-cyan); margin-top: 10px;">
-                CLEAR ALL
-            </button>
+        <div class="ticker">
+            <span class="tl">LOG</span>
+            <span class="tline num" id="ticker-line">booting…</span>
         </div>
-
-        <!-- Librarian Knowledge Panel -->
-        <div class="librarian-panel glass" id="librarian-panel">
-            <div class="panel-header">
-                <i class="fa-solid fa-server"></i> <span>KNOWLEDGE UPLOAD</span>
-                <button class="close-btn" id="librarian-close"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="upload-area" id="drop-zone">
-                <i class="fa-solid fa-cloud-arrow-up"></i>
-                <p>Drag & Drop files or Click to Browse</p>
-                <input type="file" id="knowledge-upload" accept=".pdf,.txt,.md" style="display: none;">
-            </div>
-            <div class="file-list" id="file-list">
-                <!-- Files will appear here -->
-            </div>
-            <button class="feed-btn" id="feed-btn" disabled>
-                FEED JARVIS (30m Memory)
-            </button>
-            <button class="feed-btn study-btn" id="study-btn" style="background: var(--neon-cyan); margin-top: 10px;"
-                onclick="sendText('Study this')">
-                STUDY PERMANENTLY
-            </button>
-        </div>
-
-        <!-- System Vitals Rail (Left) -->
-        <div class="vitals-panel glass" id="vitals-panel">
-            <div class="vitals-header">
-                <i class="fa-solid fa-microchip"></i> <span>SYSTEM VITALS</span>
-            </div>
-
-            <!-- Compact status dial -->
-            <main class="core-container">
-                <div class="arc-reactor" id="core">
-                    <div class="ring-outer"></div>
-                    <div class="ring-inner"></div>
-                    <div class="core-light"></div>
-                </div>
-            </main>
-
-            <div class="vitals-grid">
-                <div class="vital-item" id="vital-cpu">
-                    <div class="vital-label">CPU</div>
-                    <div class="vital-bar-container">
-                        <div class="vital-bar" id="cpu-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="vital-value" id="cpu-value">0%</div>
-                </div>
-                <div class="vital-item" id="vital-ram">
-                    <div class="vital-label">RAM</div>
-                    <div class="vital-bar-container">
-                        <div class="vital-bar" id="ram-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="vital-value" id="ram-value">0%</div>
-                </div>
-                <div class="vital-item" id="vital-battery">
-                    <div class="vital-label">
-                        <i class="fa-solid fa-battery-full" id="battery-icon"></i> BAT
-                    </div>
-                    <div class="vital-bar-container">
-                        <div class="vital-bar battery" id="battery-bar" style="width: 100%"></div>
-                    </div>
-                    <div class="vital-value" id="battery-value">100%</div>
-                </div>
-                <div class="vital-item" id="vital-disk">
-                    <div class="vital-label">DISK</div>
-                    <div class="vital-bar-container">
-                        <div class="vital-bar" id="disk-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="vital-value" id="disk-value">0%</div>
-                </div>
-            </div>
-
-            <!-- Guardrails widgets (R7) -->
-            <div class="rail-widgets">
-                <div class="rail-widget">
-                    <span class="rw-label"><i class="fa-solid fa-shield-halved"></i> GUARD</span>
-                    <span class="rw-value num" id="w-guard">—</span>
-                </div>
-                <div class="rail-widget">
-                    <span class="rw-label"><i class="fa-solid fa-coins"></i> BUDGET</span>
-                    <span class="rw-value num" id="w-budget-text">—</span>
-                </div>
-                <div class="vital-bar-container rw-bar">
-                    <div class="vital-bar" id="w-budget-bar" style="width:0%"></div>
-                </div>
-            </div>
-
-            <div class="vitals-time num" id="vitals-time">--:--:--</div>
-
-            <div class="theme-switcher" id="theme-switcher">
-                <div class="theme-dot active" data-theme="midnight" title="Amber"></div>
-                <div class="theme-dot" data-theme="command" title="Command"></div>
-                <div class="theme-dot" data-theme="brutalist" title="Alert"></div>
-                <div class="theme-dot" data-theme="zen" title="Zen"></div>
-                <div class="theme-dot" data-theme="vault" title="Vault"></div>
-            </div>
-        </div>
-
-        <!-- Dynamic Content: Messages -->
-        <div class="message-feed glass" id="message-container">
-            <div class="intro-msg">Awaiting input, Sir...</div>
-        </div>
-
-        <!-- Smart Home Control Panel -->
-        <div class="home-control glass" id="home-control">
-            <div class="home-control-header">
-                <i class="fa-solid fa-house"></i> <span>HOME CONTROL</span>
-            </div>
-
-            <!-- Photo Capture Display -->
-            <div class="photo-display" id="photo-display">
-                <div class="photo-frame" id="photo-frame">
-                    <i class="fa-solid fa-camera"></i>
-                    <span>No Photo</span>
-                </div>
-                <div class="photo-controls">
-                    <button class="capture-btn" id="capture-btn" title="Take Photo">
-                        <i class="fa-solid fa-camera"></i>
-                    </button>
-                    <button class="upload-btn" id="upload-btn" title="Upload Photo">
-                        <i class="fa-solid fa-upload"></i>
-                    </button>
-                    <input type="file" id="image-upload" accept="image/*" style="display: none;">
-                </div>
-            </div>
-
-            <div class="device-grid" id="device-grid">
-                <div class="device-card" data-device="living_room_light">
-                    <i class="fa-solid fa-lightbulb"></i>
-                    <span class="device-name">Living Room</span>
-                    <span class="device-status off" id="status-living_room_light">OFF</span>
-                </div>
-                <div class="device-card" data-device="bedroom_light">
-                    <i class="fa-solid fa-lightbulb"></i>
-                    <span class="device-name">Bedroom</span>
-                    <span class="device-status off" id="status-bedroom_light">OFF</span>
-                </div>
-                <div class="device-card" data-device="kitchen_light">
-                    <i class="fa-solid fa-lightbulb"></i>
-                    <span class="device-name">Kitchen</span>
-                    <span class="device-status off" id="status-kitchen_light">OFF</span>
-                </div>
-                <div class="device-card" data-device="bathroom_light">
-                    <i class="fa-solid fa-lightbulb"></i>
-                    <span class="device-name">Bathroom</span>
-                    <span class="device-status off" id="status-bathroom_light">OFF</span>
-                </div>
-                <div class="device-card" data-device="fan">
-                    <i class="fa-solid fa-fan"></i>
-                    <span class="device-name">Fan</span>
-                    <span class="device-status off" id="status-fan">OFF</span>
-                </div>
-                <div class="device-card" data-device="ac">
-                    <i class="fa-solid fa-snowflake"></i>
-                    <span class="device-name">A/C</span>
-                    <span class="device-status off" id="status-ac">OFF</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Input Area -->
-        <div class="input-container glass">
-            <input type="text" id="chat-input" placeholder="Type a command..." autocomplete="off">
-            <button id="send-btn"><i class="fa fa-paper-plane"></i></button>
-        </div>
-
-        <!-- Footer: Status Text -->
-        <footer class="hud-footer">
-            <div class="status-text" id="status">Systems Nominal</div>
-            <div class="listening-indicator" id="listening-indicator">
-                <span></span><span></span><span></span><span></span><span></span>
-            </div>
-        </footer>
-
-        <!-- Live Terminal Box -->
-        <div id="terminal-box" class="terminal-box glass" style="display: none;"></div>
-
-        <!-- Mobile Mic Button (Hidden on Desktop) -->
-        <div class="mobile-mic-btn" id="mobile-mic-btn">
-            <i class="fa-solid fa-microphone"></i>
-        </div>
-
     </div>
 
-    <!-- Hidden audio element for responses -->
-    <audio id="audio-player" style="display:none;"></audio>
+    <!-- ═══ DRAWERS ═══ -->
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=5"></script>
+    <!-- Tasks -->
+    <div class="drawer" id="tasks-panel">
+        <div class="d-head"><i class="tag">TSK</i><span>TO-DO LIST</span><button class="d-close" id="tasks-close">[X]</button></div>
+        <div class="d-body">
+            <div class="d-input-row">
+                <input type="text" id="task-input" placeholder="add a task" autocomplete="off">
+                <button class="d-btn primary" id="task-add-btn">ADD</button>
+            </div>
+            <div id="task-list"></div>
+            <button class="d-btn wide" id="task-clear-btn">CLEAR ALL</button>
+        </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="drawer" id="notes-panel">
+        <div class="d-head"><i class="tag">NTS</i><span>NOTES</span><button class="d-close" id="notes-close">[X]</button></div>
+        <div class="d-body">
+            <div class="d-input-row">
+                <input type="text" id="note-input" placeholder="write a note" autocomplete="off">
+                <button class="d-btn primary" id="note-add-btn">ADD</button>
+            </div>
+            <div id="note-list"></div>
+        </div>
+    </div>
+
+    <!-- Memory -->
+    <div class="drawer" id="memory-panel">
+        <div class="d-head"><i class="tag">MEM</i><span>EPISODIC MEMORY</span><button class="d-close" id="memory-close">[X]</button></div>
+        <div class="d-body">
+            <div class="d-input-row">
+                <input type="text" id="memory-input" placeholder="remember something" autocomplete="off">
+                <select id="memory-category">
+                    <option value="fact">fact</option><option value="preference">pref</option>
+                    <option value="health">health</option><option value="goal">goal</option>
+                    <option value="context">ctx</option><option value="routine">routine</option>
+                </select>
+                <button class="d-btn primary" id="memory-add-btn">ADD</button>
+            </div>
+            <div id="memory-list"></div>
+            <div id="memory-stats" class="no-data"></div>
+            <div class="d-input-row" style="margin-top:14px;">
+                <input type="text" id="transcript-search-input" placeholder="search past conversations" autocomplete="off">
+                <button class="d-btn" id="transcript-search-btn">FIND</button>
+            </div>
+            <div id="transcript-results"></div>
+        </div>
+    </div>
+
+    <!-- People -->
+    <div class="drawer" id="people-panel">
+        <div class="d-head"><i class="tag">PPL</i><span>RELATIONSHIPS</span><button class="d-close" id="people-close">[X]</button></div>
+        <div class="d-body">
+            <div class="d-input-row">
+                <input type="text" id="person-name-input" placeholder="name" autocomplete="off">
+                <input type="text" id="person-rel-input" placeholder="relationship" autocomplete="off" style="width:110px;">
+                <button class="d-btn primary" id="person-add-btn">ADD</button>
+            </div>
+            <div id="people-list"></div>
+        </div>
+    </div>
+
+    <!-- Meeting -->
+    <div class="drawer" id="meeting-panel">
+        <div class="d-head"><i class="tag">MTG</i><span>MEETING MODE</span><button class="d-close" id="meeting-close">[X]</button></div>
+        <div class="d-body">
+            <div class="meet-status" id="meeting-status">ready to record</div>
+            <button class="d-btn wide" id="meeting-start-btn">● START RECORDING</button>
+            <button class="d-btn wide" id="meeting-stop-btn">■ STOP &amp; PROCESS</button>
+            <div class="meet-transcript" id="meeting-transcript"></div>
+        </div>
+    </div>
+
+    <!-- Privacy -->
+    <div class="drawer" id="privacy-panel">
+        <div class="d-head"><i class="tag">SEC</i><span>PRIVACY &amp; TRUST</span><button class="d-close" id="privacy-close">[X]</button></div>
+        <div class="d-body"><div id="privacy-settings"></div></div>
+    </div>
+
+    <!-- Capabilities -->
+    <div class="drawer" id="capabilities-panel">
+        <div class="d-head"><i class="tag">SKL</i><span>CAPABILITIES</span><button class="d-close" id="capabilities-close">[X]</button></div>
+        <div class="d-body">
+            <div class="tabs">
+                <button class="tab active" data-cab-tab="skills">SKILLS</button>
+                <button class="tab" data-cab-tab="tools">TOOLS</button>
+            </div>
+            <div id="cab-skills-tab"><div id="skills-list"></div></div>
+            <div id="cab-tools-tab" class="hidden"><div id="tools-list"></div></div>
+        </div>
+    </div>
+
+    <!-- Librarian -->
+    <div class="drawer" id="librarian-panel">
+        <div class="d-head"><i class="tag">LIB</i><span>KNOWLEDGE UPLOAD</span><button class="d-close" id="librarian-close">[X]</button></div>
+        <div class="d-body">
+            <div class="upload-area" id="drop-zone">
+                <p>DRAG &amp; DROP · OR CLICK · pdf/txt/md</p>
+                <input type="file" id="knowledge-upload" accept=".pdf,.txt,.md" style="display:none;">
+            </div>
+            <div id="file-list"></div>
+            <button class="d-btn wide" id="feed-btn" disabled>FEED JARVIS (30m memory)</button>
+            <button class="d-btn wide" id="study-btn">STUDY PERMANENTLY</button>
+        </div>
+    </div>
+
+    <!-- AI Providers (BYOK) -->
+    <div class="drawer" id="llm-panel">
+        <div class="d-head"><i class="tag">LLM</i><span>AI PROVIDERS · BYOK</span><button class="d-close" id="llm-close">[X]</button></div>
+        <div class="d-body">
+            <div id="llm-fleet" class="llm-fleet">SYNCING FLEET…</div>
+            <div class="d-input-row">
+                <select id="llm-provider-select">
+                    <option value="groq">groq</option>
+                    <option value="openai">openai</option>
+                    <option value="anthropic">anthropic</option>
+                    <option value="google">google</option>
+                    <option value="deepseek">deepseek</option>
+                    <option value="openrouter">openrouter</option>
+                    <option value="custom">custom</option>
+                </select>
+                <input type="password" id="llm-key-input" placeholder="paste api key" autocomplete="off">
+                <button class="d-btn primary" id="llm-save-btn">SAVE</button>
+            </div>
+            <div id="llm-provider-list"></div>
+            <div class="llm-note">keys persist in config/providers.json · never logged · failover automatic</div>
+        </div>
+    </div>
+
+    <!-- Command palette -->
+    <div class="palette-backdrop" id="palette-backdrop">
+        <div class="palette">
+            <input type="text" id="palette-input" placeholder="type a function code or name…" autocomplete="off">
+            <ul id="palette-list"></ul>
+        </div>
+    </div>
+
+    <!-- Toasts -->
+    <div class="toast-stack" id="toast-stack"></div>
+
+    <!-- Reminder toast -->
+    <div class="reminder-toast" id="reminder-toast" style="display:none;">
+        <div class="rt-h">REMINDER</div>
+        <div class="rt-t" id="reminder-toast-text"></div>
+        <div class="rt-a">
+            <button id="reminder-snooze-btn">SNOOZE 10M</button>
+            <button id="reminder-dismiss-btn">DISMISS</button>
+        </div>
+    </div>
+
+    <!-- Home control (hidden rail — retained for socket photo/device wiring) -->
+    <div id="home-control" style="display:none;">
+        <div class="photo-display"><div class="photo-frame" id="photo-frame"><span>No Photo</span></div>
+            <input type="file" id="image-upload" accept="image/*" style="display:none;">
+        </div>
+        <div id="device-grid"></div>
+    </div>
+
+    <div id="terminal-box" class="terminal-box"></div>
+    <div class="mobile-mic-btn" id="mobile-mic-btn"></div>
+</div>
+
+<audio id="audio-player" style="display:none;"></audio>
+
+<script src="{{ url_for('static', filename='script.js') }}?v=7"></script>
 </body>
-
 </html>

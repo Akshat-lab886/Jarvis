@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from config import Config
 import os
+import re
 import json
 import threading
 import time
@@ -32,6 +33,7 @@ from utils.telegram_bot import JarvisTeleBot
 # Initialize Core Modules (single instance, shared everywhere)
 brain = Brain()
 executor = JarvisExecutor()
+_SERVER_START = time.time()
 
 # Auto-RAG: let the brain pull relevant document excerpts from the
 # knowledge vault on every query.  Readiness-gated so a broken or
@@ -218,14 +220,118 @@ def health():
     import datetime
     from utils.circuit_breaker import get_breaker
     from utils.budget import get_budget
+    fleet = {}
+    try:
+        from utils.llm import get_router
+        d = get_router().describe()
+        fleet = {'providers': [p['name'] for p in d['providers']],
+                 'cooldowns': d['cooldowns']}
+    except Exception:
+        pass
     return jsonify({
         'status': 'ok',
         'service': 'jarvis',
         'time': datetime.datetime.now().isoformat(timespec='seconds'),
+        'uptime_s': round(time.time() - _SERVER_START, 1),
         'brain_active': brain.active if hasattr(brain, 'active') else False,
+        'llm_fleet': fleet,
         'circuit_breaker': get_breaker().report.status,
         'budget': get_budget().status(),
     })
+
+
+_LOG_SECRET_PATTERNS = re.compile(
+    r'((sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+|'
+    r'((?:api[_-]?key|token|secret|password)[=: ]+\S+))',
+    re.IGNORECASE)
+
+
+@app.route('/api/logs')
+def api_logs():
+    """Sanitized tail of jarvis.log for the ops-deck ticker."""
+    n = request.args.get('n', default=6, type=int)
+    try:
+        n = max(1, min(int(n or 6), 30))
+    except (TypeError, ValueError):
+        n = 6
+    log_path = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'jarvis.log')
+    lines = []
+    try:
+        with open(log_path, 'r', errors='replace') as f:
+            lines = f.readlines()[-n:]
+        lines = [_LOG_SECRET_PATTERNS.sub('[REDACTED]', l).rstrip()[-220:]
+                 for l in lines if l.strip()]
+    except Exception as e:
+        lines = [f'log unavailable: {e}']
+    return jsonify({'lines': lines})
+
+
+# --------------------------------------------------------------------- #
+# BYOK provider management — bring any key at runtime, no restart.
+# Mutations require the webhook key when JARVIS_WEBHOOK_KEY is set.
+# --------------------------------------------------------------------- #
+
+def _provider_gate():
+    """Return an error response when the mutation gate rejects."""
+    import os
+    required = os.getenv('JARVIS_WEBHOOK_KEY', '')
+    if not required:
+        return None
+    supplied = (request.args.get('key', '')
+                or request.headers.get('X-Jarvis-Key', ''))
+    if supplied != required:
+        return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    return None
+
+
+@app.route('/api/providers')
+def providers_status():
+    from utils.llm import get_router
+    return jsonify({'ok': True, **get_router().describe()})
+
+
+@app.route('/api/providers', methods=['POST'])
+def providers_set():
+    gate = _provider_gate()
+    if gate is not None:
+        return gate
+    payload = request.get_json(silent=True) or {}
+    provider = str(payload.get('provider', '')).strip().lower()
+    api_key = str(payload.get('api_key', '')).strip()
+    if not provider or not api_key:
+        return jsonify({'ok': False,
+                        'error': 'provider and api_key required'}), 400
+    from utils.llm.keystore import ENV_MAP
+    if provider not in ENV_MAP:
+        return jsonify({'ok': False,
+                        'error': f"unknown provider '{provider}'"}), 400
+    from utils.llm import get_router
+    router = get_router()
+    router.keystore.set(provider, api_key)
+    status = router.refresh()
+    return jsonify({'ok': True, 'provider': provider,
+                    'fleet': [p['name'] for p in status['providers']]})
+
+
+@app.route('/api/providers/<provider>', methods=['DELETE'])
+def providers_delete(provider):
+    gate = _provider_gate()
+    if gate is not None:
+        return gate
+    from utils.llm.keystore import ENV_MAP
+    provider = provider.strip().lower()
+    if provider not in ENV_MAP:
+        return jsonify({'ok': False,
+                        'error': f"unknown provider '{provider}'"}), 400
+    from utils.llm import get_router
+    router = get_router()
+    router.keystore.delete(provider)
+    status = router.refresh()
+    return jsonify({'ok': True, 'removed': provider,
+                    'note': 'env-var keys reappear on restart; '
+                            'remove them from .env to disable fully',
+                    'fleet': [p['name'] for p in status['providers']]})
 
 
 @app.route('/webhook', methods=['POST'])

@@ -144,6 +144,31 @@ ROUTING RULES
         if not self.active:
              print("Warning: Brain inactive (No Keys).")
 
+        # ------------------------------------------------------------------ #
+        # BYOK multi-provider router (utils/llm) — the primary completion
+        # fleet.  Any provider key (OpenAI/Anthropic/Gemini/Groq/OpenRouter/
+        # DeepSeek/local Ollama...) lights up here; the legacy Gemini+Groq
+        # loops below stay as fallback for bare/stubbed brains.
+        # ------------------------------------------------------------------ #
+        self.router = None
+        try:
+            from utils.llm import get_router
+            _router = get_router()
+            if len(_router.providers) > 0:
+                self.router = _router
+                print(f"Brain: multi-provider router active "
+                      f"({', '.join(sorted(_router.providers))})")
+        except Exception as e:
+            print(f"Brain: router init skipped: {e}")
+
+    @property
+    def _llm_ready(self):
+        """True when ANY completion path can serve a request."""
+        if self.active:
+            return True
+        router = getattr(self, 'router', None)
+        return bool(router and len(router.providers))
+
     def inject_knowledge(self, text):
         """Inject knowledge into short-term memory with a timestamp."""
         self.short_term_memory = text
@@ -501,10 +526,11 @@ ROUTING RULES
         through a specialized subagent persona; its system prompt,
         temperature and token budget apply unless explicitly overridden.
 
-        Tries Gemini (when configured), then every configured model on
-        every available Groq client.  Returns stripped text or None.
+        Tries the BYOK router fleet first (every configured provider),
+        then falls back to Gemini → every configured model on every
+        available Groq client.  Returns stripped text or None.
         """
-        if not self.active and not Config.GOOGLE_API_KEY:
+        if not self._llm_ready:
             return None
 
         # --- Guardrails: circuit breaker + session budget --------------
@@ -541,6 +567,28 @@ ROUTING RULES
             tokens = 2048 if max_tokens is None else max_tokens
 
         last_error = None
+
+        # --- BYOK router fleet (primary) ---------------------------------
+        router = getattr(self, 'router', None)
+        if router is not None and len(router.providers) > 0:
+            from utils.llm.shim import RouterCompletionClient
+            preferred = None
+            if profile is not None and getattr(profile, 'model', None):
+                preferred = [profile.model]
+            try:
+                result = RouterCompletionClient(router)._create(
+                    model=preferred[0] if preferred else None,
+                    messages=[{"role": "system", "content": system_text},
+                              {"role": "user", "content": prompt}],
+                    max_tokens=tokens, temperature=temp,
+                    timeout=timeout)
+                text = (getattr(result.choices[0].message, 'content', '')
+                        or '').strip()
+                if text:
+                    return text
+                # Empty-but-successful response → let legacy paths try too
+            except Exception as e:
+                print(f"Brain.complete: router chain failed: {e}")
 
         # --- Gemini path ---
         if Config.GOOGLE_API_KEY and not self._provider_cooling('gemini'):
@@ -667,7 +715,7 @@ ROUTING RULES
             return None
 
     def think(self, prompt, image_path=None):
-        if not self.active:
+        if not self._llm_ready:
             return {"action": "chat", "response": "I don't have a brain yet (Missing Groq API Key)."}
 
         # Activity heartbeat — wakes idle hibernation if suspended
@@ -843,8 +891,12 @@ ROUTING RULES
             except Exception:
                 pass
 
-        # Try Gemini Direct
-        if Config.GOOGLE_API_KEY:
+        # Try Gemini Direct — legacy single-provider path, only when the
+        # router fleet isn't already covering Google (avoids double-billing
+        # the same Gemini quota on every request).
+        _router_probe = getattr(self, 'router', None)
+        if Config.GOOGLE_API_KEY and (
+                _router_probe is None or len(_router_probe.providers) == 0):
             gemini_res = self.process_with_gemini(prompt, image_path, current_system_instruction)
             if gemini_res:
                 return gemini_res
@@ -944,6 +996,27 @@ ROUTING RULES
             models_to_try = vision_models + others
             print(f"Vision Request Detected. Prioritizing: {vision_models}")
 
+        # --- Attempt matrix: BYOK fleet first, legacy Groq fallback -----
+        # Fleet entries carry "provider:model" labels routed through the
+        # shim; legacy entries are bare slugs against self.clients.
+        from utils.llm.shim import RouterCompletionClient
+        attempt_matrix = []
+        router = getattr(self, 'router', None)
+        if router is not None and len(router.providers) > 0:
+            require = {'vision'} if image_path else None
+            try:
+                chain = router._chain(require=require)
+            except Exception as chain_err:
+                print(f"Brain: router chain build failed: {chain_err}")
+                chain = []
+            shim = RouterCompletionClient(router)
+            for provider_obj, mdl in chain:
+                attempt_matrix.append((f"{provider_obj.name}:{mdl}", shim))
+        if not attempt_matrix:
+            for m in models_to_try:
+                for c in self.clients:
+                    attempt_matrix.append((m, c))
+
         # --- Failover Loop ---
         from utils.budget import get_budget, BudgetExceededError
         from utils.circuit_breaker import get_breaker
@@ -960,7 +1033,8 @@ ROUTING RULES
         print(f"Brain: context estimate {total_est} tok "
               f"(ceiling {max_tok}, history {len(history_snapshot)} entries)")
         last_error = None
-        for model in models_to_try:
+        _last_attempt = len(attempt_matrix) - 1
+        for _attempt_i, (model, _client) in enumerate(attempt_matrix):
             # Guardrails before spending tokens on this attempt
             try:
                 if not get_breaker().allow_llm_spend():
@@ -979,8 +1053,10 @@ ROUTING RULES
                   f"(in~{est_input_real}, out≤{completion_budget})")
             success = False
             completion = None
-            
-            for i, client in enumerate(self.clients):
+
+            # One client per attempt (the shim IS the fleet; legacy
+            # entries carry a single real Groq-compatible client).
+            for i, client in enumerate((_client,)):
                 try:
                     print(f"  Attempting with Key #{i+1}...")
                     attempts = 0
@@ -1013,15 +1089,18 @@ ROUTING RULES
                                   f"{delay:.0f}s...")
                             time.sleep(delay)
                     success = True
-                    get_budget().record(
-                        model=model,
-                        input_text=json.dumps(messages)[:4000],
-                        output_text=(completion.choices[0].message.content
-                                     or ''),
-                        usage=getattr(completion, 'usage', None))
+                    if not isinstance(client, RouterCompletionClient):
+                        # Fleet attempts were already accounted inside the
+                        # router; only legacy client calls record here.
+                        get_budget().record(
+                            model=model,
+                            input_text=json.dumps(messages)[:4000],
+                            output_text=(completion.choices[0].message.content
+                                         or ''),
+                            usage=getattr(completion, 'usage', None))
                     break # Key worked!
                 except Exception as e:
-                    print(f"  Key #{i+1} Failed: {e}")
+                    print(f"  Attempt failed: {e}")
                     last_error = e
             
             if not success:
@@ -1122,7 +1201,7 @@ ROUTING RULES
                     # If response looks truncated (finish_reason == length),
                     # retry with a larger token budget before giving up.
                     finish = getattr(completion.choices[0], 'finish_reason', '')
-                    if finish == 'length' and model != models_to_try[-1]:
+                    if finish == 'length' and _attempt_i < _last_attempt:
                         print(f"Response truncated from {model}, retrying with more tokens...")
                         try:
                             retry = client.chat.completions.create(

@@ -28,14 +28,28 @@ themeDots.forEach(dot => {
 // Restore saved theme on load
 applyTheme(localStorage.getItem('jarvis-theme') || 'midnight');
 
-// --- PANEL MANAGEMENT ---
+// Instant HUD Clock — strip + rail
+function updateHUDClock() {
+    const t = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const vt = document.getElementById('vitals-time');
+    const sc = document.getElementById('strip-clock');
+    const rc = document.getElementById('rail-clock');
+    if (vt) vt.textContent = t;
+    if (sc) sc.textContent = t;
+    if (rc) rc.textContent = t;
+}
+setInterval(updateHUDClock, 1000);
+updateHUDClock();
+
+// --- PANEL MANAGEMENT (drawers only; ops rail is permanent) ---
 const allPanels = [
     'memory-panel', 'people-panel', 'meeting-panel', 'privacy-panel',
-    'notes-panel', 'tasks-panel', 'librarian-panel', 'missions-panel'
+    'notes-panel', 'tasks-panel', 'librarian-panel', 'capabilities-panel',
+    'llm-panel'
 ];
 const allTriggers = [
     'memory-btn', 'people-btn', 'meeting-btn', 'privacy-btn',
-    'notes-btn', 'tasks-btn', 'librarian-btn', 'missions-btn'
+    'notes-btn', 'tasks-btn', 'librarian-btn', 'skills-btn', 'llm-btn'
 ];
 let activePanelId = null;
 
@@ -139,7 +153,30 @@ audioPlayer.addEventListener('ended', () => {
     updateStatus("LISTENING");
 });
 
-// System Vitals real-time updates
+// System Vitals real-time updates + sparklines
+const _sparkCpu = [];
+const _sparkRam = [];
+
+function _drawSpark(id, data) {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const poly = svg.querySelector('polyline');
+    if (!poly) return;
+    const W = 120, H = 18, MAX = 30;
+    const view = data.slice(-MAX);
+    if (!view.length) {
+        poly.setAttribute('points', `0,${H - 2} ${W},${H - 2}`);
+        return;
+    }
+    const span = Math.max(view.length - 1, 1);
+    const pts = view.map((v, i) => {
+        const x = (i / span) * W;
+        const y = H - 2 - (v / 100) * (H - 4);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    poly.setAttribute('points', pts);
+}
+
 socket.on('system_vitals', (vitals) => {
     // CPU
     const cpuBar = document.getElementById('cpu-bar');
@@ -147,10 +184,10 @@ socket.on('system_vitals', (vitals) => {
     if (cpuBar && cpuValue) {
         cpuBar.style.width = vitals.cpu + '%';
         cpuValue.textContent = vitals.cpu + '%';
-        cpuBar.className = 'vital-bar';
-        if (vitals.cpu > 90) cpuBar.classList.add('critical');
-        else if (vitals.cpu > 70) cpuBar.classList.add('warning');
     }
+    _sparkCpu.push(vitals.cpu);
+    if (_sparkCpu.length > 30) _sparkCpu.shift();
+    _drawSpark('spark-cpu', _sparkCpu);
 
     // RAM
     const ramBar = document.getElementById('ram-bar');
@@ -158,36 +195,18 @@ socket.on('system_vitals', (vitals) => {
     if (ramBar && ramValue) {
         ramBar.style.width = vitals.ram + '%';
         ramValue.textContent = vitals.ram + '%';
-        ramBar.className = 'vital-bar';
-        if (vitals.ram > 90) ramBar.classList.add('critical');
-        else if (vitals.ram > 80) ramBar.classList.add('warning');
     }
+    _sparkRam.push(vitals.ram);
+    if (_sparkRam.length > 30) _sparkRam.shift();
+    _drawSpark('spark-ram', _sparkRam);
 
     // Battery
     const batteryBar = document.getElementById('battery-bar');
     const batteryValue = document.getElementById('battery-value');
-    const batteryIcon = document.getElementById('battery-icon');
     if (batteryBar && batteryValue) {
         batteryBar.style.width = vitals.battery + '%';
-        batteryValue.textContent = vitals.battery + '%';
-        batteryBar.className = 'vital-bar battery';
+        batteryValue.textContent = vitals.battery + '%' + (vitals.charging ? ' ⌁' : '');
         if (vitals.battery < 20) batteryBar.classList.add('low');
-
-        // Charging indicator
-        if (batteryIcon) {
-            batteryIcon.className = 'fa-solid';
-            if (vitals.charging) {
-                batteryIcon.classList.add('fa-battery-bolt', 'charging');
-            } else if (vitals.battery > 75) {
-                batteryIcon.classList.add('fa-battery-full');
-            } else if (vitals.battery > 50) {
-                batteryIcon.classList.add('fa-battery-three-quarters');
-            } else if (vitals.battery > 25) {
-                batteryIcon.classList.add('fa-battery-half');
-            } else {
-                batteryIcon.classList.add('fa-battery-quarter');
-            }
-        }
     }
 
     // Disk
@@ -196,9 +215,6 @@ socket.on('system_vitals', (vitals) => {
     if (diskBar && diskValue) {
         diskBar.style.width = vitals.disk + '%';
         diskValue.textContent = vitals.disk + '%';
-        diskBar.className = 'vital-bar';
-        if (vitals.disk > 90) diskBar.classList.add('critical');
-        else if (vitals.disk > 80) diskBar.classList.add('warning');
     }
 
     // Timestamp
@@ -208,33 +224,46 @@ socket.on('system_vitals', (vitals) => {
     }
 });
 
-// Smart Home device status updates
-socket.on('home_update', (devices) => {
-    console.log('🏠 Home update:', devices);
-    for (const [deviceId, device] of Object.entries(devices)) {
-        const card = document.querySelector(`[data-device="${deviceId}"]`);
-        const statusEl = document.getElementById(`status-${deviceId}`);
+// Smart Home device status — build cards on demand, delegate clicks
+const DEVICE_LIST = [
+    ['living_room_light', 'LIVING ROOM'], ['bedroom_light', 'BEDROOM'],
+    ['kitchen_light', 'KITCHEN'], ['bathroom_light', 'BATHROOM'],
+    ['fan', 'FAN'], ['ac', 'A/C']
+];
 
-        if (card && statusEl) {
+function ensureDeviceCards() {
+    const grid = document.getElementById('device-grid');
+    if (!grid || grid.children.length) return;
+    grid.innerHTML = DEVICE_LIST.map(([id, label]) =>
+        `<div class="row" data-device="${id}" style="cursor:pointer;">
+            <div class="r1"><span class="t">${label}</span>
+            <span class="m" id="status-${id}">OFF</span></div>
+        </div>`).join('');
+}
+
+socket.on('home_update', (devices) => {
+    console.log('Home update:', devices);
+    ensureDeviceCards();
+    for (const [deviceId, device] of Object.entries(devices)) {
+        const row = document.querySelector(`[data-device="${deviceId}"]`);
+        const statusEl = document.getElementById(`status-${deviceId}`);
+        if (row && statusEl) {
             const isOn = device.status === 'on';
-            card.classList.toggle('on', isOn);
+            row.classList.toggle('on', isOn);
             statusEl.textContent = isOn ? 'ON' : 'OFF';
-            statusEl.className = `device-status ${isOn ? 'on' : 'off'}`;
+            statusEl.style.color = isOn ? 'var(--ok)' : '';
         }
     }
 });
 
-// Device card click handlers
-document.querySelectorAll('.device-card').forEach(card => {
-    card.addEventListener('click', () => {
-        const deviceId = card.dataset.device;
-        const isOn = card.classList.contains('on');
-        const command = isOn ? 'turn_off' : 'turn_on';
-
-        // Send toggle command to server
-        socket.emit('user_input', {
-            text: `${command.replace('_', ' ')} the ${deviceId.replace(/_/g, ' ')}`
-        });
+document.addEventListener('click', (e) => {
+    const card = e.target.closest('[data-device]');
+    if (!card || !card.dataset.device) return;
+    const deviceId = card.dataset.device;
+    const isOn = card.classList.contains('on');
+    const command = isOn ? 'turn_off' : 'turn_on';
+    socket.emit('user_input', {
+        text: `${command.replace('_', ' ')} the ${deviceId.replace(/_/g, ' ')}`
     });
 });
 
@@ -454,6 +483,23 @@ if (devBtn) {
     });
 }
 
+// --- SKILLS DRAWER DATA ---
+const skillsBtnEl = document.getElementById('skills-btn');
+if (skillsBtnEl) {
+    skillsBtnEl.addEventListener('click', () => {
+        socket.emit('skills_action', { action: 'list' });
+        socket.emit('tools_action', { action: 'list' });
+    });
+}
+
+// --- CMD CURSOR ---
+const cmdWrap = document.getElementById('cmd-wrap');
+if (chatInput && cmdWrap) {
+    chatInput.addEventListener('input', () => {
+        cmdWrap.classList.toggle('has-text', !!chatInput.value);
+    });
+}
+
 // --- CHAT INPUT ---
 function sendText(text) {
     text = text || chatInput.value.trim();
@@ -501,13 +547,9 @@ function renderTasks(items) {
         div.className = 'task-item' + (item.done ? ' done' : '');
         div.dataset.id = item.id;
         div.innerHTML = `
-            <span class="task-check" data-action="done" title="Mark done">
-                <i class="fa-solid ${item.done ? 'fa-square-check' : 'fa-square'}"></i>
-            </span>
-            <span class="task-text">${escapeHtml(item.text)}</span>
-            <span class="task-del" data-action="remove" title="Remove">
-                <i class="fa-solid fa-trash"></i>
-            </span>
+            <span class="task-check" data-action="done" title="Mark done" style="color:${item.done ? 'var(--ok)' : 'var(--text-3)'}">[${item.done ? 'X' : ' '}]</span>
+            <span class="task-text" style="flex:1;${item.done ? 'color:var(--text-3);text-decoration:line-through;' : ''}">${escapeHtml(item.text)}</span>
+            <span class="task-del" data-action="remove" title="Remove" style="cursor:pointer;">[DEL]</span>
         `;
         taskList.appendChild(div);
     });
@@ -595,9 +637,7 @@ function renderNotes(items) {
         const created = item.created ? item.created.slice(5, 16) : '';
         div.innerHTML = `
             <span class="task-text"><span style="opacity:0.5;font-size:0.75rem;">[${escapeHtml(created)}]</span> ${escapeHtml(item.text)}</span>
-            <span class="task-del" data-action="remove" title="Delete note">
-                <i class="fa-solid fa-trash"></i>
-            </span>
+            <span class="task-del" data-action="remove" title="Delete note" style="cursor:pointer;">[DEL]</span>
         `;
         noteList.appendChild(div);
     });
@@ -715,7 +755,7 @@ function renderMemories(items, stats) {
         div.innerHTML = `
             <span class="mem-cat">${escapeHtml(cat)}</span>
             <span class="mem-text">${escapeHtml(item.text)}</span>
-            <span class="mem-del" title="Forget"><i class="fa-solid fa-xmark"></i></span>
+            <span class="mem-del" title="Forget" style="cursor:pointer;">[X]</span>
         `;
         memoryList.appendChild(div);
     });
@@ -746,8 +786,9 @@ if (memoryList) {
     });
 }
 socket.on('memory_update', (data) => {
-    console.log('🧠 Memory update:', data);
     renderMemories(data.items, data.stats);
+    const st = document.getElementById('stat-mems');
+    if (st && data.stats) st.textContent = String(data.stats.total ?? '');
 });
 
 // --- PEOPLE PANEL ---
@@ -886,218 +927,114 @@ if (privacyBtn && privacyPanel) {
 }
 if (privacyClose) privacyClose.addEventListener('click', closeAllPanels);
 
-// --- MISSIONS / COMPLEX TASKS PANEL ---
-const missionsBtn = document.getElementById('missions-btn');
-const missionsPanel = document.getElementById('missions-panel');
-const missionsClose = document.getElementById('missions-close');
+// --- MISSIONS · OPS RAIL (dense) ---
 const missionsList = document.getElementById('missions-list');
 const missionsHistoryList = document.getElementById('missions-history-list');
 const missionsHistoryStats = document.getElementById('missions-history-stats');
-const missionsActiveTab = document.getElementById('missions-active-tab');
-const missionsHistoryTab = document.getElementById('missions-history-tab');
-const missionsTabBtns = document.querySelectorAll('.missions-tab');
+const missionsHistoryWrap = document.getElementById('missions-history-wrap');
 let currentTasks = [];
 let currentHistory = [];
 let currentHistoryStats = null;
-let activeMissionsTab = 'active';
 
-function switchMissionsTab(tab) {
-    activeMissionsTab = tab;
-    missionsTabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
-    if (missionsActiveTab) missionsActiveTab.style.display = tab === 'active' ? 'block' : 'none';
-    if (missionsHistoryTab) missionsHistoryTab.style.display = tab === 'history' ? 'block' : 'none';
-    if (tab === 'history') {
-        socket.emit('complex_task_action', { action: 'history' });
-    }
+const CHIP = {
+    pending:  '[PEND]', running: '[RUN]', paused: '[HOLD]',
+    completed: '[ OK ]', failed: '[FAIL]', cancelled: '[CANC]',
+    skipped: '[SKIP]'
+};
+const CHIPCLS = {
+    pending: '', running: 'run', paused: 'warn',
+    completed: 'ok', failed: 'fail', cancelled: '', skipped: 'skip'
+};
+
+function chip(status) {
+    return `<span class="chip ${CHIPCLS[status] || ''}">${CHIP[status] || '[????]'}</span>`;
 }
-missionsTabBtns.forEach(btn => {
-    btn.addEventListener('click', () => switchMissionsTab(btn.dataset.tab));
-});
+
+function flashStack(stackId) {
+    const el = document.getElementById(stackId);
+    if (!el) return;
+    el.scrollIntoView({ block: 'start' });
+    el.style.background = 'var(--accent-dim)';
+    setTimeout(() => { el.style.background = ''; }, 350);
+}
 
 function renderMissions(tasks) {
     if (!missionsList) return;
-    missionsList.innerHTML = '';
     currentTasks = tasks || [];
-    if (!tasks || tasks.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'task-empty';
-        empty.textContent = 'No active missions, Sir.';
-        missionsList.appendChild(empty);
+    const st = document.getElementById('stat-tasks');
+    if (st) st.textContent = String(currentTasks.length);
+
+    if (!currentTasks.length) {
+        missionsList.innerHTML = '<div class="no-data">no active missions</div>';
         return;
     }
-    tasks.forEach(task => {
-        const div = document.createElement('div');
-        div.className = 'mission-card glass';
-        div.dataset.taskId = task.id;
-        const statusIcon = {
-            'pending': '⏳', 'running': '⚡', 'paused': '⏸️',
-            'completed': '✅', 'failed': '❌', 'cancelled': '🚫'
-        }[task.status] || '⏳';
-        const isActive = ['pending', 'running', 'paused'].includes(task.status);
+    missionsList.innerHTML = currentTasks.map(task => {
         const pct = task.progress || 0;
-        const hasDeps = task.has_dependencies || false;
-        const modeBadge = hasDeps
-            ? '<span class="mission-mode-badge parallel">⚡ PARALLEL</span>'
-            : '<span class="mission-mode-badge sequential">🔗 SEQUENTIAL</span>';
-
-        // Build steps HTML with dependency info
-        let stepsHtml = '';
-        if (task.steps && task.steps.length > 0) {
-            stepsHtml = '<div class="mission-steps">' + task.steps.map(s => {
-                const sIcon = {
-                    'pending': '⬜', 'running': '🔄', 'completed': '✅',
-                    'failed': '❌', 'skipped': '⏭️'
-                }[s.status] || '⬜';
-                const deps = s.depends_on && s.depends_on.length > 0
-                    ? `<span class="step-deps">← from ${s.depends_on.join(', ')}</span>`
-                    : '';
-                const thread = s.thread_id && hasDeps
-                    ? `<span class="step-thread" title="Thread: ${escapeHtml(s.thread_id)}">🔩</span>`
-                    : '';
-                return `<div class="mission-step ${s.status}">` +
-                    `<span class="step-icon">${sIcon}</span> ` +
-                    `<span class="step-id">${s.id}.</span> ` +
-                    `<span class="step-text">${escapeHtml(s.text.slice(0, 70))}</span> ` +
-                    `${deps}${thread}` +
-                    (s.error ? `<span class="step-error" title="${escapeHtml(s.error)}">⚠️</span>` : '') +
-                    `</div>`;
-            }).join('') + '</div>';
-        }
-
-        // Layer info for parallel tasks
-        let layerHtml = '';
-        if (hasDeps && task.dependency_layers && task.dependency_layers.length > 1) {
-            const layerLabels = task.dependency_layers.map((layer, i) => {
-                const count = layer.length;
-                const parallel = count > 1 ? ' ⚡' : '';
-                return `L${i + 1}(${count}step${count > 1 ? 's' : ''}${parallel})`;
-            }).join(' → ');
-            layerHtml = `<div class="mission-layers">${layerLabels}</div>`;
-        }
-
-        let actionsHtml = '';
-        if (isActive) {
-            const pauseResume = task.status === 'paused'
-                ? `<button class="mission-action" data-action="resume" title="Resume">▶️ Resume</button>`
-                : `<button class="mission-action" data-action="pause" title="Pause">⏸️ Pause</button>`;
-            actionsHtml = `<div class="mission-actions">${pauseResume}<button class="mission-action" data-action="cancel" title="Cancel">🚫 Cancel</button></div>`;
-        }
-        const costHtml = (task.cost_usd && task.cost_usd > 0.0001)
-            ? `<span class="mission-cost" title="${task.cost_tokens || 0} tokens">· $${task.cost_usd.toFixed(4)}</span>` : '';
-        div.innerHTML = `
-            <div class="mission-header">
-                <span class="mission-status-icon">${statusIcon}</span>
-                <span class="mission-desc">${escapeHtml(task.description.slice(0, 80))}</span>
-                ${modeBadge}
-                <span class="mission-id">#${task.id}</span>
-            </div>
-            <div class="mission-progress-bar"><div class="mission-progress-fill" style="width: ${pct}%"></div></div>
-            <div class="mission-meta">${task.steps ? task.steps.length : 0} steps · ${pct}% · ${task.status} ${costHtml}</div>
-            ${layerHtml}
-            ${stepsHtml}
-            ${task.final_summary ? '<div class="mission-summary">' + escapeHtml(task.final_summary.slice(0, 200)) + '</div>' : ''}
-            ${actionsHtml}
-        `;
-        missionsList.appendChild(div);
-    });
+        const done = task.steps ? task.steps.filter(s => s.status === 'completed').length : 0;
+        const total = task.steps ? task.steps.length : 0;
+        const cost = task.cost_usd ? ` $${task.cost_usd.toFixed(4)}` : '';
+        const mode = task.has_dependencies ? 'DAG' : 'SEQ';
+        const steps = (task.steps || []).map(s =>
+            `<div class="mstep">${chip(s.status)}<span>${escapeHtml(s.text.slice(0, 64))}</span>${s.error ? `<span class="e" title="${escapeHtml(s.error)}">ERR</span>` : ''}</div>`
+        ).join('');
+        const summary = task.final_summary
+            ? `<div class="msum">${escapeHtml(task.final_summary.slice(0, 160))}</div>` : '';
+        const isActive = ['pending', 'running', 'paused'].includes(task.status);
+        const actions = isActive
+            ? `<div class="mission-actions">
+                 <button class="tbtn" data-action="${task.status === 'paused' ? 'resume' : 'pause'}">${task.status === 'paused' ? '[RESUME]' : '[HOLD]'}</button>
+                 <button class="tbtn danger" data-action="cancel">[CANCEL]</button>
+               </div>` : '';
+        return `<details class="mission" data-task-id="${task.id}">
+            <summary>
+                ${chip(task.status)}
+                <span class="m-desc">${escapeHtml(task.description.slice(0, 46))}</span>
+                <span class="m-meta">${done}/${total} ${pct}%${cost} ${mode}</span>
+            </summary>
+            <div class="mission-body">${steps}${summary}</div>
+            ${actions}
+        </details>`;
+    }).join('');
 }
 
 function renderHistory(tasks, stats) {
     if (!missionsHistoryList) return;
-    missionsHistoryList.innerHTML = '';
     currentHistory = tasks || [];
     currentHistoryStats = stats || null;
 
-    // Render stats header
     if (missionsHistoryStats && stats) {
         const s = stats;
         const rate = s.total > 0 ? Math.round(s.completed / s.total * 100) : 0;
-        missionsHistoryStats.innerHTML = `
-            <div class="history-stats">
-                <span class="stat-item"><span class="stat-num">${s.total}</span> total</span>
-                <span class="stat-item completed"><span class="stat-num">${s.completed}</span> done</span>
-                <span class="stat-item failed"><span class="stat-num">${s.failed}</span> failed</span>
-                <span class="stat-item"><span class="stat-num">${rate}%</span> success</span>
-            </div>
-        `;
+        missionsHistoryStats.innerHTML =
+            `<div class="kv"><span class="k">TOTAL</span><span class="v num">${s.total}</span></div>` +
+            `<div class="kv"><span class="k">OK</span><span class="v num">${s.completed} (${rate}%)</span></div>` +
+            `<div class="kv"><span class="k">FAIL</span><span class="v num">${s.failed}</span></div>`;
     }
 
-    if (!tasks || tasks.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'task-empty';
-        empty.textContent = 'No mission history yet, Sir.';
-        missionsHistoryList.appendChild(empty);
+    if (!currentHistory.length) {
+        missionsHistoryList.innerHTML = '<div class="no-data">no history yet</div>';
         return;
     }
-
-    tasks.forEach(task => {
-        const div = document.createElement('div');
-        div.className = 'mission-card glass history-card';
-        div.dataset.taskId = task.id;
-
-        const statusIcon = {
-            'completed': '✅', 'failed': '❌', 'cancelled': '🚫'
-        }[task.status] || '⏳';
-
-        const pct = task.progress || 0;
-        const completedSteps = task.steps ? task.steps.filter(s => s.status === 'completed').length : 0;
-        const totalSteps = task.steps ? task.steps.length : 0;
-        const failedSteps = task.steps ? task.steps.filter(s => s.status === 'failed').length : 0;
-
-        // Format timestamps
-        const created = task.created_at ? formatTaskTime(task.created_at) : '';
-        const completed = task.completed_at ? formatTaskTime(task.completed_at) : '';
-        const duration = task.created_at && task.completed_at
-            ? formatDuration(task.created_at, task.completed_at) : '';
-
-        // Build steps HTML (collapsed by default)
-        let stepsHtml = '';
-        if (task.steps && task.steps.length > 0) {
-            stepsHtml = '<div class="mission-steps history-steps collapsed">' + task.steps.map(s => {
-                const sIcon = {
-                    'completed': '✅', 'failed': '❌', 'skipped': '⏭️',
-                    'pending': '⬜', 'running': '🔄'
-                }[s.status] || '⬜';
-                return `<div class="mission-step ${s.status}">` +
-                    `<span class="step-icon">${sIcon}</span> ` +
-                    `<span class="step-id">${s.id}.</span> ` +
-                    `<span class="step-text">${escapeHtml(s.text.slice(0, 70))}</span>` +
-                    (s.error ? `<span class="step-error" title="${escapeHtml(s.error)}">⚠️</span>` : '') +
-                    `</div>`;
-            }).join('') + '</div>';
-        }
-
-        div.innerHTML = `
-            <div class="mission-header">
-                <span class="mission-status-icon">${statusIcon}</span>
-                <span class="mission-desc">${escapeHtml(task.description.slice(0, 80))}</span>
-                <span class="mission-id">#${task.id}</span>
-            </div>
-            <div class="mission-meta history-meta">
-                <span>${completedSteps}/${totalSteps} steps${failedSteps > 0 ? ' · ' + failedSteps + ' failed' : ''}</span>
-                <span>${pct}%</span>
-                ${task.cost_usd ? `<span class="mission-cost">$${task.cost_usd.toFixed(4)} · ${task.cost_tokens || 0} tok</span>` : ''}
-            </div>
-            <div class="mission-timestamps">
-                ${created ? `<span class="ts-item"><i class="fa-solid fa-clock"></i> ${created}</span>` : ''}
-                ${duration ? `<span class="ts-item"><i class="fa-solid fa-stopwatch"></i> ${duration}</span>` : ''}
-            </div>
-            ${stepsHtml}
-            ${task.final_summary ? '<div class="mission-summary">' + escapeHtml(task.final_summary.slice(0, 300)) + '</div>' : ''}
-        `;
-
-        // Toggle steps on click
-        const header = div.querySelector('.mission-header');
-        if (header && stepsHtml) {
-            header.style.cursor = 'pointer';
-            header.addEventListener('click', () => {
-                const steps = div.querySelector('.history-steps');
-                if (steps) steps.classList.toggle('collapsed');
-            });
-        }
-
-        missionsHistoryList.appendChild(div);
-    });
+    missionsHistoryList.innerHTML = currentHistory.map(task => {
+        const total = task.steps ? task.steps.length : 0;
+        const done = task.steps ? task.steps.filter(s => s.status === 'completed').length : 0;
+        const cost = task.cost_usd ? ` · $${task.cost_usd.toFixed(4)}` : '';
+        const dur = task.created_at && task.completed_at ? formatDuration(task.created_at, task.completed_at) : '';
+        const when = task.completed_at ? task.completed_at.slice(5, 16).replace('T', ' ') : '';
+        const steps = (task.steps || []).map(s =>
+            `<div class="mstep">${chip(s.status)}<span>${escapeHtml(s.text.slice(0, 60))}</span></div>`
+        ).join('');
+        const summary = task.final_summary
+            ? `<div class="msum">${escapeHtml(task.final_summary.slice(0, 140))}</div>` : '';
+        return `<details class="mission" data-task-id="${task.id}">
+            <summary>
+                ${chip(task.status)}
+                <span class="m-desc">${escapeHtml(task.description.slice(0, 42))}</span>
+                <span class="m-meta">${done}/${total}${cost}</span>
+            </summary>
+            <div class="mission-body">${steps}${when ? `<div>${when}${dur ? ' · ' + dur : ''}</div>` : ''}${summary}</div>
+        </details>`;
+    }).join('');
 }
 
 function formatTaskTime(isoString) {
@@ -1108,15 +1045,12 @@ function formatTaskTime(isoString) {
         const diffMins = Math.floor(diffMs / 60000);
         const diffHrs = Math.floor(diffMs / 3600000);
         const diffDays = Math.floor(diffMs / 86400000);
-
-        if (diffMins < 1) return 'just now';
+        if (diffMins < 1) return 'now';
         if (diffMins < 60) return `${diffMins}m ago`;
         if (diffHrs < 24) return `${diffHrs}h ago`;
         if (diffDays < 7) return `${diffDays}d ago`;
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    } catch {
-        return '';
-    }
+    } catch { return ''; }
 }
 
 function formatDuration(startIso, endIso) {
@@ -1130,61 +1064,52 @@ function formatDuration(startIso, endIso) {
         const mins = Math.floor(secs / 60);
         const remSecs = secs % 60;
         return `${mins}m ${remSecs}s`;
-    } catch {
-        return '';
-    }
+    } catch { return ''; }
 }
 
-if (missionsBtn && missionsPanel) {
-    missionsBtn.addEventListener('click', () => {
-        openPanel('missions-panel', 'missions-btn');
-        if (activeMissionsTab === 'history') {
-            socket.emit('complex_task_action', { action: 'history' });
-        } else {
-            socket.emit('complex_task_action', { action: 'list' });
-        }
-    });
+// missions stack controls
+const misTabActive = document.getElementById('mis-tab-active');
+const misTabHist = document.getElementById('mis-tab-hist');
+function setMisView(view) {
+    if (misTabActive) misTabActive.style.color = view === 'active' ? 'var(--accent)' : '';
+    if (misTabHist) misTabHist.style.color = view === 'history' ? 'var(--accent)' : '';
+    if (missionsList) missionsList.style.display = view === 'active' ? '' : 'none';
+    if (missionsHistoryWrap) missionsHistoryWrap.style.display = view === 'history' ? '' : 'none';
+    if (view === 'history') socket.emit('complex_task_action', { action: 'history' });
 }
-if (missionsClose) missionsClose.addEventListener('click', closeAllPanels);
+if (misTabActive) misTabActive.addEventListener('click', () => setMisView('active'));
+if (misTabHist) misTabHist.addEventListener('click', () => setMisView('history'));
+
 if (missionsList) {
     missionsList.addEventListener('click', (e) => {
-        const btn = e.target.closest('.mission-action');
+        const btn = e.target.closest('.tbtn[data-action]');
         if (!btn) return;
-        const card = btn.closest('.mission-card');
+        const card = btn.closest('[data-task-id]');
         if (!card) return;
-        const taskId = card.dataset.taskId;
-        const action = btn.dataset.action;
-        socket.emit('complex_task_action', { action: action, task_id: taskId });
+        socket.emit('complex_task_action',
+                    { action: btn.dataset.action, task_id: card.dataset.taskId });
     });
 }
 socket.on('task_update', (data) => {
-    console.log('🚀 Task update:', data);
     const idx = currentTasks.findIndex(t => t.id === data.id);
-    if (idx >= 0) {
-        currentTasks[idx] = data;
-    } else {
-        currentTasks.unshift(data);
-    }
+    if (idx >= 0) currentTasks[idx] = data;
+    else currentTasks.unshift(data);
     renderMissions(currentTasks);
 });
 socket.on('tasks_list', (data) => {
-    console.log('📋 Tasks list:', data);
     currentTasks = data.tasks || [];
     renderMissions(currentTasks);
 });
-socket.on('task_step_started', (data) => {
-    console.log('▶️ Step started:', data);
-});
-socket.on('task_step_completed', (data) => {
-    console.log('✅ Step completed:', data);
-});
-socket.on('task_step_failed', (data) => {
-    console.log('❌ Step failed:', data);
+socket.on('task_step_started', () => {});
+socket.on('task_step_completed', () => {});
+socket.on('task_step_failed', () => {});
+socket.on('task_reflection', (data) => {
+    showToast('CRITIC', `${data.assessment || 'analyzing'} — recovery ${data.child_id} (${data.steps} steps)`, 'reflection');
 });
 socket.on('tasks_history', (data) => {
-    console.log('📜 Tasks history:', data);
     renderHistory(data.tasks, data.stats);
 });
+socket.emit('complex_task_action', { action: 'list' });
 
 // --- MOBILE MIC LOGIC ---
 const mobileMicBtn = document.getElementById('mobile-mic-btn');
@@ -1240,43 +1165,72 @@ if (mobileMicBtn) {
 // --- UI HELPERS ---
 
 function setCoreState(state) {
-    // States: idle, active (awake/listening), speaking, processing
-    core.classList.remove('listening', 'speaking');
-
-    // 'active' in JS maps to 'listening' CSS class (Orange/Red)
-    // 'speaking' maps to 'speaking' CSS class (Cyan)
-
-    if (state === 'active') { // Awake and Listening
-        core.classList.add('listening');
-    } else if (state === 'speaking' || state === 'processing') {
-        core.classList.add('speaking');
-    }
-    // idle has no extra classes
+    // States: idle, active (listening), speaking, processing
+    const dial = core ? core.closest('.reactor') : null;
+    if (!dial) return;
+    dial.classList.remove('listening', 'speaking');
+    if (state === 'active') dial.classList.add('listening');
+    else if (state === 'speaking' || state === 'processing') dial.classList.add('speaking');
 }
 
 function updateStatus(text, type = 'normal') {
-    statusText.innerText = text.toUpperCase();
-    if (type === 'online') {
-        statusText.style.color = '#00f3ff';
-        statusText.style.textShadow = '0 0 10px #00f3ff';
-    } else {
-        statusText.style.color = '#fff';
-        statusText.style.textShadow = 'none';
-    }
+    if (!statusText) return;
+    statusText.innerText = String(text || '').toUpperCase();
+    statusText.style.color = type === 'online' ? 'var(--ok)'
+        : type === 'offline' ? 'var(--fail)' : 'var(--text-3)';
 }
 
-function addMessage(text) {
-    const msgDiv = document.createElement('div');
-    msgDiv.innerText = text;
-    msgDiv.style.margin = "10px 0";
-    msgDiv.style.animation = "fadeInUp 0.5s ease";
+function formatMarkdown(text) {
+    if (!text) return '';
+    let escaped = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    
+    escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(0,0,0,0.4);padding:8px 12px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);overflow-x:auto;margin:6px 0;font-family:var(--font-mono);font-size:12px;"><code>$1</code></pre>');
+    escaped = escaped.replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:3px;font-family:var(--font-mono);font-size:12px;">$1</code>');
+    escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    escaped = escaped.replace(/\n/g, '<br>');
+    return escaped;
+}
 
-    // Keep only last 3 messages
-    if (messageContainer.children.length > 2) {
-        messageContainer.removeChild(messageContainer.firstChild);
+function quickPrompt(text) {
+    if (chatInput) {
+        chatInput.value = text;
+        chatInput.focus();
+        if (typeof sendText === 'function') {
+            sendText(text);
+        } else if (sendBtn) {
+            sendBtn.click();
+        }
     }
+}
+window.quickPrompt = quickPrompt;
 
-    messageContainer.appendChild(msgDiv);
+function addMessage(text) {
+    if (!messageContainer) return;
+    const intro = document.getElementById('intro-msg');
+    if (intro) intro.remove();
+
+    let dir = 'j', clean = String(text || '');
+    if (clean.startsWith('YOU:')) { dir = 'u'; clean = clean.replace(/^YOU:\s*/i, ''); }
+    else if (clean.startsWith('JARVIS:')) { clean = clean.replace(/^JARVIS:\s*/i, ''); }
+    else if (clean.startsWith('SYSTEM:')) { dir = 'sys'; clean = clean.replace(/^SYSTEM:\s*/i, ''); }
+    else if (clean.startsWith('ERROR:')) { dir = 'sys'; clean = 'ERR — ' + clean.replace(/^ERROR:\s*/i, ''); }
+
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const mark = dir === 'u' ? '\u00BB' : dir === 'sys' ? '\u00B7' : '\u00AB';
+    const row = document.createElement('div');
+    row.className = 'msg ' + dir;
+    const bodyHtml = dir === 'sys' ? escapeHtml(clean) : formatMarkdown(clean);
+    row.innerHTML = `<span class="ts num">${ts}</span><span class="dir">${mark}</span><span class="body ${dir === 'sys' ? '' : 'prose'}">${bodyHtml}</span>`;
+
+    if (messageContainer.children.length > 80) {
+        messageContainer.removeChild(messageContainer.firstElementChild);
+    }
+    messageContainer.appendChild(row);
+    messageContainer.scrollTop = messageContainer.scrollHeight;
 }
 
 // --- LIBRARIAN MODE LOGIC ---
@@ -1339,8 +1293,8 @@ function updateFileList() {
         const item = document.createElement('div');
         item.className = 'file-item';
         item.innerHTML = `
-            <span><i class="fa-solid fa-file-alt"></i> ${file.name}</span>
-            <i class="fa-solid fa-trash remove-file" onclick="removeFile(${index})"></i>
+            <span>${file.name}</span>
+            <span class="remove-file" style="cursor:pointer;" onclick="removeFile(${index})">[DEL]</span>
         `;
         fileList.appendChild(item);
     });
@@ -1362,7 +1316,7 @@ if (feedBtn) {
         if (selectedFiles.length === 0) return;
 
         feedBtn.disabled = true;
-        feedBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+        feedBtn.innerHTML = 'PROCESSING…';
         updateStatus("Ingesting Knowledge...");
         setCoreState('processing');
 
@@ -1407,123 +1361,62 @@ if (feedBtn) {
 }
 
 /* ====================================================================== *
- *  UI UPGRADE v3 — clustered nav, automations, capabilities, toasts,
- *  reflection visibility.  Self-contained section appended below.
+ * OPS DECK runtime — toasts, ops-rail stacks, palette, ticker, widgets
  * ====================================================================== */
 (function () {
     const $ = (id) => document.getElementById(id);
 
-    /* ------------------------------------------------------------------ *
-     * 1. Generalized toast stack
-     * ------------------------------------------------------------------ */
+    /* ── 1 · TOASTS ────────────────────────────────────────────────── */
     const toastStack = $('toast-stack');
 
     window.showToast = function showToast(title, text, kind, timeout) {
         if (!toastStack) return;
         const el = document.createElement('div');
-        el.className = `hud-toast glass ${kind || 'info'}`;
+        el.className = `toast ${kind || ''}`;
         el.innerHTML =
-            `<div class="hud-toast-title"><i class="fa-solid ${
-                kind === 'automation' ? 'fa-repeat' :
-                kind === 'reflection' ? 'fa-rotate-left' :
-                kind === 'success' ? 'fa-circle-check' :
-                kind === 'error' ? 'fa-triangle-exclamation' : 'fa-bell'
-            }"></i> ${title}</div>` +
-            `<div class="hud-toast-body">${escapeHtml(String(text || '')).slice(0, 400)}</div>`;
+            `<div class="tt">[${(kind || 'INFO').toUpperCase()}] ${escapeHtml(title)}</div>` +
+            `<div class="tb">${escapeHtml(String(text || '')).slice(0, 400)}</div>`;
         toastStack.appendChild(el);
         requestAnimationFrame(() => el.classList.add('show'));
         const ttl = timeout || (kind === 'error' ? 9000 : 6000);
-        setTimeout(() => {
-            el.classList.remove('show');
-            setTimeout(() => el.remove(), 400);
-        }, ttl);
+        setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 120); }, ttl);
     };
 
     socket.on('automation_fired', (data) => {
-        showToast(`Automation #${data.id} ran`,
-                  data.result ? `${data.action}\n\n${data.result}` : data.action,
-                  'automation', 8000);
+        showToast('AUTOMATION', `#${data.id} ${data.action}${data.result ? '\n\n' + data.result : ''}`, 'automation', 8000);
+        refreshAutomations();
     });
 
-    /* ------------------------------------------------------------------ *
-     * 2. Nav launcher (overflow for small screens)
-     * ------------------------------------------------------------------ */
-    const navMoreBtn = $('nav-more-btn');
-    const navLauncher = $('nav-launcher');
-    const navLauncherClose = $('nav-launcher-close');
-
-    function toggleLauncher(show) {
-        if (!navLauncher) return;
-        navLauncher.style.display = show ? 'block' : 'none';
-    }
-    if (navMoreBtn) navMoreBtn.addEventListener('click',
-        () => toggleLauncher(navLauncher.style.display === 'none'));
-    if (navLauncherClose) navLauncherClose.addEventListener('click',
-        () => toggleLauncher(false));
-
-    if (navLauncher) {
-        navLauncher.addEventListener('click', (e) => {
-            const item = e.target.closest('.launcher-item');
-            if (!item) return;
-            toggleLauncher(false);
-            openPanel(item.dataset.panel, null);
-        });
-    }
-
-    // Trigger → panel map used by both header and launcher
-    const TRIGGER_PANEL = {
-        'vision-btn': null,
-        'meeting-btn': 'meeting-panel',
-        'tasks-btn': 'tasks-panel',
-        'notes-btn': 'notes-panel',
-        'librarian-btn': 'librarian-panel',
-        'memory-btn': 'memory-panel',
-        'people-btn': 'people-panel',
-        'dev-btn': null,
-        'privacy-btn': 'privacy-panel',
-        'missions-btn': 'missions-panel',
-        'automations-btn': 'automations-panel',
-        'skills-btn': 'capabilities-panel',
-        'approvals-btn': 'approvals-panel',
-    };
-    Object.entries(TRIGGER_PANEL).forEach(([tid, panel]) => {
-        if (!panel) return;                       // vision/dev keep own logic
-        const btn = $(tid);
-        if (btn && !btn.dataset.wired) {
-            btn.dataset.wired = '1';
-            btn.addEventListener('click', () => openPanel(panel, tid));
-        }
-    });
-
-    /* ------------------------------------------------------------------ *
-     * 3. Automations panel
-     * ------------------------------------------------------------------ */
+    /* ── 2 · AUTOMATIONS STACK ─────────────────────────────────────── */
     const automationList = $('automation-list');
     let automationJobs = [];
 
     function renderAutomations() {
         if (!automationList) return;
+        const nextEl = $('stat-next');
+        if (nextEl) nextEl.textContent =
+            automationJobs[0] && automationJobs[0].next
+                ? automationJobs[0].next.split('(')[0].trim() : '—';
+
         if (!automationJobs.length) {
-            automationList.innerHTML =
-                '<div class="empty-hint">No recurring automations yet.<br>' +
-                'Try: <i>every day at 9am give me my briefing</i></div>';
+            automationList.innerHTML = '<div class="no-data">none · try: every day at 9am …</div>';
             return;
         }
         automationList.innerHTML = automationJobs.map(j => {
-            const hist = (j.history || []).map(h => `<span class="history-dot ${h.ok ? 'ok' : 'fail'}" title="${h.at} ${h.ok ? 'ok' : 'fail'}"></span>`).join('');
-            return `<div class="list-item automation-item" data-id="${j.id}">
-                <div class="item-main">
-                    <span class="item-title">#${j.id} ${escapeHtml(j.describe || '')}</span>
-                    <span class="item-sub">${escapeHtml(j.action)}</span>
-                    <div class="item-meta">
-                        ${j.next ? `<span>next: ${escapeHtml(j.next)}</span>` : ''}
-                        ${j.last_fired ? `<span>last: ${escapeHtml(j.last_fired)}</span>` : ''}
-                    </div>
-                    ${hist ? `<div class="history-dots">${hist}</div>` : ''}
+            const hist = (j.history || []).slice(0, 3).map(h =>
+                `<i class="${h.ok ? 'ok' : 'fail'}"></i>`).join('');
+            return `<div class="row">
+                <div class="r1">
+                    <span class="t" title="${escapeHtml(j.action)}">#${j.id} ${escapeHtml(j.describe || '')}</span>
+                    <span class="m">${hist ? `<span class="hd">${hist}</span>` : ''}</span>
                 </div>
-                <div class="item-actions">
-                    <button class="item-action" data-run="${j.id}" title="Run now"><i class="fa-solid fa-play"></i></button>
-                    <button class="item-action danger" data-cancel="${j.id}" title="Cancel"><i class="fa-solid fa-trash"></i></button>
+                <div class="r2"><span class="a">${escapeHtml(j.action)}</span></div>
+                <div class="r2">
+                    ${j.next ? `<span>NEXT ${escapeHtml(j.next)}</span>` : ''}
+                    <span class="btns" style="margin-left:auto;">
+                        <button class="tbtn" data-run="${j.id}">RUN</button>
+                        <button class="tbtn danger" data-cancel="${j.id}">DEL</button>
+                    </span>
                 </div>
             </div>`;
         }).join('');
@@ -1532,7 +1425,6 @@ if (feedBtn) {
     function refreshAutomations() {
         socket.emit('automation_action', { action: 'list' });
     }
-
     socket.on('automations_update', (data) => {
         automationJobs = data.jobs || [];
         renderAutomations();
@@ -1543,15 +1435,15 @@ if (feedBtn) {
     function submitAutomation() {
         const text = (automationInput.value || '').trim();
         if (!text) return;
-        automationAddBtn.disabled = true;
         socket.emit('automation_action', { action: 'add', text });
         automationInput.value = '';
-        setTimeout(() => { automationAddBtn.disabled = false; }, 800);
     }
     if (automationAddBtn) automationAddBtn.addEventListener('click', submitAutomation);
     if (automationInput) automationInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') submitAutomation();
     });
+    const autRefresh = $('automations-refresh');
+    if (autRefresh) autRefresh.addEventListener('click', refreshAutomations);
 
     if (automationList) {
         automationList.addEventListener('click', (e) => {
@@ -1560,48 +1452,36 @@ if (feedBtn) {
                 socket.emit('automation_action', { action: 'run_now', keyword: runBtn.dataset.run });
                 return;
             }
-            const btn = e.target.closest('[data-cancel]');
-            if (!btn) return;
-            socket.emit('automation_action',
-                        { action: 'cancel', keyword: btn.dataset.cancel });
+            const del = e.target.closest('[data-cancel]');
+            if (del) socket.emit('automation_action', { action: 'cancel', keyword: del.dataset.cancel });
         });
     }
+    refreshAutomations();
 
-    // Refresh when panel opens (hook the existing openPanel)
-    const _openPanel = window.openPanel || openPanel;
-    window.openPanel = function (panelId, triggerId) {
-        _openPanel(panelId, triggerId);
-        if (panelId === 'automations-panel') refreshAutomations();
-        if (panelId === 'capabilities-panel') {
-            socket.emit('skills_action', { action: 'list' });
-            socket.emit('tools_action', { action: 'list' });
-        }
-        if (panelId === 'approvals-panel') {
-            socket.emit('approvals_list');
-        }
-    };
-
-    /* ---- Approvals inbox ---- */
+    /* ── 3 · APPROVALS STACK ───────────────────────────────────────── */
     const approvalsListEl = $('approvals-list');
-    socket.on('approvals_update', (data) => {
-        const pending = data.pending || [];
+
+    function renderApprovals(pending) {
         if (!approvalsListEl) return;
         if (!pending.length) {
-            approvalsListEl.innerHTML = '<div class="empty-hint">No pending approvals.</div>';
+            approvalsListEl.innerHTML = '<div class="no-data">no pending approvals</div>';
             return;
         }
         approvalsListEl.innerHTML = pending.map(p =>
-            `<div class="list-item">
-                <div class="item-main">
-                    <span class="item-title">${escapeHtml(p.action)}</span>
-                    <span class="item-sub">${escapeHtml(p.summary)}</span>
-                </div>
-                <div class="item-actions">
-                    <button class="item-action approve" data-approve="${p.id}" title="Approve"><i class="fa-solid fa-check"></i></button>
-                    <button class="item-action danger" data-deny="${p.id}" title="Deny"><i class="fa-solid fa-xmark"></i></button>
+            `<div class="row">
+                <div class="r1"><span class="t">${escapeHtml(p.action)}</span></div>
+                <div class="r2"><span class="a">${escapeHtml(p.summary)}</span></div>
+                <div class="r2">
+                    <button class="tbtn ok" data-approve="${p.id}">[OK]</button>
+                    <button class="tbtn danger" data-deny="${p.id}">[NO]</button>
                 </div>
             </div>`).join('');
-    });
+    }
+
+    function refreshApprovals() { socket.emit('approvals_list'); }
+    socket.on('approvals_update', (data) => renderApprovals(data.pending || []));
+    const apprRefresh = $('approvals-refresh');
+    if (apprRefresh) apprRefresh.addEventListener('click', refreshApprovals);
     if (approvalsListEl) {
         approvalsListEl.addEventListener('click', (e) => {
             const a = e.target.closest('[data-approve]');
@@ -1610,68 +1490,69 @@ if (feedBtn) {
             else if (d) socket.emit('approval_response', { id: d.dataset.deny, approved: false });
         });
     }
+    refreshApprovals();
+    setInterval(refreshApprovals, 15000);
 
-    /* ---- Transcript search (Memory panel) ---- */
-    const transcriptInput = $('transcript-search-input');
-    const transcriptBtn = $('transcript-search-btn');
-    const transcriptResults = $('transcript-results');
-    function doTranscriptSearch() {
-        const q = (transcriptInput.value || '').trim();
-        if (!q) return;
-        socket.emit('transcript_search', { query: q });
-    }
-    if (transcriptBtn) transcriptBtn.addEventListener('click', doTranscriptSearch);
-    if (transcriptInput) transcriptInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') doTranscriptSearch(); });
-    socket.on('transcript_results', (data) => {
-        if (!transcriptResults) return;
-        const hits = data.results || [];
-        if (!hits.length) {
-            transcriptResults.innerHTML = `<div class="empty-hint">No matches for "${escapeHtml(data.query)}"</div>`;
-            return;
-        }
-        transcriptResults.innerHTML = hits.map(h =>
-            `<div class="list-item"><div class="item-main"><span class="item-sub">${escapeHtml(h.snippet)}</span><span class="item-meta">${escapeHtml(h.created.slice(0,16))}</span></div></div>`
-        ).join('');
+    /* ── 4 · APPROVAL HOLD TOASTS ──────────────────────────────────── */
+    const activeHolds = {};
+    socket.on('approval_request', (data) => {
+        if (!toastStack || activeHolds[data.id]) return;
+        const el = document.createElement('div');
+        el.className = 'toast approval';
+        el.innerHTML =
+            `<div class="tt">[HOLD] ${escapeHtml(data.action)}</div>` +
+            `<div class="tb">${escapeHtml(data.summary || '')}</div>` +
+            `<div class="acts">` +
+            `<button class="abtn approve" data-id="${data.id}">[ APPROVE ]</button>` +
+            `<button class="abtn deny" data-id="${data.id}">[ DENY ]</button></div>`;
+        toastStack.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('show'));
+        activeHolds[data.id] = el;
+        const resolve = (approved) => {
+            socket.emit('approval_response', { id: data.id, approved });
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 120);
+            delete activeHolds[data.id];
+            refreshApprovals();
+        };
+        el.querySelector('.approve').addEventListener('click', () => resolve(true));
+        el.querySelector('.deny').addEventListener('click', () => resolve(false));
+        setTimeout(() => {
+            if (activeHolds[data.id]) { el.remove(); delete activeHolds[data.id]; refreshApprovals(); }
+        }, (data.timeout || 120) * 1000);
     });
 
-    /* ------------------------------------------------------------------ *
-     * 4. Capabilities panel (Skills + Tools)
-     * ------------------------------------------------------------------ */
+    /* ── 5 · CAPABILITIES DRAWER (skills/tools) ────────────────────── */
     document.querySelectorAll('[data-cab-tab]').forEach(tab => {
         tab.addEventListener('click', () => {
-            document.querySelectorAll('[data-cab-tab]').forEach(t =>
-                t.classList.remove('active'));
+            document.querySelectorAll('[data-cab-tab]').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const which = tab.dataset.cabTab;
-            $('cab-skills-tab').style.display = which === 'skills' ? '' : 'none';
-            $('cab-tools-tab').style.display = which === 'tools' ? '' : 'none';
+            const sk = $('cab-skills-tab'), tl = $('cab-tools-tab');
+            if (sk) sk.classList.toggle('hidden', which !== 'skills');
+            if (tl) tl.classList.toggle('hidden', which !== 'tools');
         });
     });
 
-    /* ---- inline args dialog ------------------------------------------ */
     function openArgsDialog(title, fields, onSubmit) {
         const backdrop = document.createElement('div');
         backdrop.className = 'arg-dialog-backdrop';
         backdrop.innerHTML =
-            `<div class="arg-dialog glass">
+            `<div class="arg-dialog">
                 <div class="panel-header"><span>${escapeHtml(title)}</span>
-                    <button class="close-btn arg-cancel"><i class="fa-solid fa-xmark"></i></button>
-                </div>
+                    <button class="d-close arg-cancel">[X]</button></div>
                 <div class="arg-fields">${fields.map(f =>
                     `<label class="arg-field">
                         <span>${escapeHtml(f.name)}${f.required ? ' *' : ''}
                             <em>${escapeHtml(f.description || f.type || '')}</em></span>
-                        <input type="text" data-arg="${escapeHtml(f.name)}"
-                               placeholder="${escapeHtml(f.type || 'value')}">
-                    </label>`).join('')}
-                </div>
-                <button class="feed-btn arg-submit">RUN</button>
+                        <input type="text" data-arg="${escapeHtml(f.name)}">
+                    </label>`).join('')}</div>
+                <button class="arg-submit">RUN</button>
             </div>`;
         document.body.appendChild(backdrop);
         const close = () => backdrop.remove();
         backdrop.querySelector('.arg-cancel').addEventListener('click', close);
-        backdrop.addEventListener('click', (e) => {
-            if (e.target === backdrop) close(); });
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
         backdrop.querySelector('.arg-submit').addEventListener('click', () => {
             const values = {};
             let missing = null;
@@ -1680,44 +1561,37 @@ if (feedBtn) {
                 if (v) values[inp.dataset.arg] = v;
                 else if (!missing) missing = inp.dataset.arg;
             });
-            if (missing) { inp => inp; showToast('Missing value', `"${missing}" is required`, 'error'); return; }
+            if (missing) { showToast('MISSING', `"${missing}" is required`, 'error'); return; }
             close();
             onSubmit(values);
         });
     }
 
-    /* ---- skills ------------------------------------------------------- */
-    let skillItems = [];
     const skillsListEl = $('skills-list');
-
+    let skillItems = [];
     socket.on('skills_list', (data) => {
         skillItems = data.skills || [];
+        const st = $('stat-skills');
+        if (st) st.textContent = String(skillItems.length);
         if (!skillsListEl) return;
         if (!skillItems.length) {
-            skillsListEl.innerHTML =
-                '<div class="empty-hint">No skills saved yet.<br>Say: ' +
-                '<i>"save this as a skill named X"</i> after a code task.</div>';
+            skillsListEl.innerHTML = '<div class="no-data">no skills · say "save this as a skill"</div>';
             return;
         }
         skillsListEl.innerHTML = skillItems.map(s =>
-            `<div class="list-item skill-item" data-name="${escapeHtml(s.name)}">
-                <div class="item-main">
-                    <span class="item-title">${escapeHtml(s.display_name || s.name)}
-                        <small>· ${s.runs || 0} runs</small></span>
-                    <span class="item-sub">${escapeHtml(s.description || '(no description)')}</span>
-                    ${s.params && s.params.length ?
-                        `<span class="param-chips">${s.params.map(p =>
-                            `<code>${escapeHtml(p)}</code>`).join('')}</span>` : ''}
+            `<div class="drow" data-name="${escapeHtml(s.name)}">
+                <div class="grow">
+                    <span style="color:var(--text-1)">${escapeHtml(s.display_name || s.name)}</span>
+                    <small style="color:var(--text-3)"> · ${s.runs || 0} runs</small>
+                    <span class="sub">${escapeHtml(s.description || '')}</span>
+                    ${s.params && s.params.length ? `<span class="sub">${s.params.map(p => `<code>{${escapeHtml(p)}}</code>`).join(' ')}</span>` : ''}
                 </div>
-                <div class="item-actions">
-                    <button class="item-action" data-run="${escapeHtml(s.name)}" title="Run">
-                        <i class="fa-solid fa-play"></i></button>
-                    <button class="item-action danger" data-del="${escapeHtml(s.name)}" title="Delete">
-                        <i class="fa-solid fa-trash"></i></button>
+                <div style="display:flex;gap:4px;">
+                    <button class="tbtn" data-run="${escapeHtml(s.name)}">RUN</button>
+                    <button class="tbtn danger" data-del="${escapeHtml(s.name)}">DEL</button>
                 </div>
             </div>`).join('');
     });
-
     if (skillsListEl) {
         skillsListEl.addEventListener('click', (e) => {
             const runBtn = e.target.closest('[data-run]');
@@ -1730,44 +1604,34 @@ if (feedBtn) {
                     socket.emit('skills_action', { action: 'run', name, params: {} });
                     return;
                 }
-                openArgsDialog(`Run skill: ${name}`,
+                openArgsDialog(`RUN ${name}`,
                     params.map(p => ({ name: p, type: 'value', required: true })),
-                    (values) => socket.emit('skills_action',
-                        { action: 'run', name, params: values }));
+                    (values) => socket.emit('skills_action', { action: 'run', name, params: values }));
             } else if (delBtn) {
                 socket.emit('skills_action', { action: 'delete', name: delBtn.dataset.del });
             }
         });
     }
 
-    /* ---- tools --------------------------------------------------------- */
     const toolsListEl = $('tools-list');
-
     socket.on('tools_list', (data) => {
         const tools = data.tools || [];
         if (!toolsListEl) return;
         if (!tools.length) {
-            toolsListEl.innerHTML =
-                '<div class="empty-hint">No external tools registered.<br>' +
-                'Drop a JSON manifest into <b>tools_registry/</b>.</div>';
+            toolsListEl.innerHTML = '<div class="no-data">no tools · drop a manifest in tools_registry/</div>';
             return;
         }
         toolsListEl.innerHTML = tools.map(t =>
-            `<div class="list-item tool-item" data-name="${escapeHtml(t.name)}">
-                <div class="item-main">
-                    <span class="item-title">
-                        <span class="method-badge method-${(t.method || 'GET').toLowerCase()}">${t.method}</span>
-                        ${escapeHtml(t.name)}</span>
-                    <span class="item-sub">${escapeHtml(t.description)}</span>
-                    ${Object.keys(t.params || {}).length ?
-                        `<span class="param-chips">${Object.entries(t.params).map(([p, spec]) =>
-                            `<code title="${escapeHtml(spec.description || '')}">${escapeHtml(p)}${spec.required ? '*' : ''}</code>`
-                        ).join('')}</span>` : ''}
+            `<div class="drow" data-name="${escapeHtml(t.name)}">
+                <div class="grow">
+                    <span style="color:var(--accent)">[${t.method}]</span>
+                    <span style="color:var(--text-1)">${escapeHtml(t.name)}</span>
+                    <span class="sub">${escapeHtml(t.description)}</span>
+                    ${Object.keys(t.params || {}).length
+                        ? `<span class="sub">${Object.entries(t.params).map(([p, spec]) =>
+                            `<code>${escapeHtml(p)}${spec.required ? '*' : ''}</code>`).join(' ')}</span>` : ''}
                 </div>
-                <div class="item-actions">
-                    <button class="item-action" data-call="${escapeHtml(t.name)}" title="Call">
-                        <i class="fa-solid fa-bolt"></i></button>
-                </div>
+                <div style="display:flex;gap:4px;"><button class="tbtn" data-call="${escapeHtml(t.name)}">CALL</button></div>
             </div>`).join('');
 
         toolsListEl.querySelectorAll('[data-call]').forEach(btn => {
@@ -1775,134 +1639,173 @@ if (feedBtn) {
                 const name = btn.dataset.call;
                 const tool = tools.find(t => t.name === name) || {};
                 const params = Object.entries(tool.params || {}).map(([p, spec]) =>
-                    ({ name: p, type: spec.type || 'value',
-                       description: spec.description || '',
-                       required: !!spec.required }));
+                    ({ name: p, type: spec.type || 'value', description: spec.description || '', required: !!spec.required }));
                 if (!params.length) {
                     socket.emit('tools_action', { action: 'call', name, args: {} });
                     return;
                 }
-                openArgsDialog(`Call tool: ${name}`, params,
-                    (values) => socket.emit('tools_action',
-                        { action: 'call', name, args: values }));
+                openArgsDialog(`CALL ${name}`, params,
+                    (values) => socket.emit('tools_action', { action: 'call', name, args: values }));
             });
         });
     });
 
-    /* ------------------------------------------------------------------ *
-     * 5. Reflection visibility in Missions + skipped steps
-     * ------------------------------------------------------------------ */
-    socket.on('task_reflection', (data) => {
-        showToast('Critic engaged',
-                  `${data.assessment || 'Analyzing failures'} — recovery task ` +
-                  `${data.child_id} running (${data.steps} step(s)).`,
-                  'reflection', 7000);
-        const card = document.querySelector(
-            `.mission-card[data-task-id="${data.task_id}"]`);
-        if (card && !card.querySelector('.reflection-badge')) {
-            const badge = document.createElement('span');
-            badge.className = 'reflection-badge';
-            badge.title = data.assessment || '';
-            badge.textContent = '↻ RECOVERY';
-            card.querySelector('.mission-header')?.appendChild(badge);
-        }
-    });
-
-    socket.on('task_step_skipped', (data) => {
-        // Lightweight feed note so skips are visible even with panel closed
-        if (data.step && data.step.error) {
-            updateStatus(`Step ${data.step.id} skipped`);
-        }
-    });
-})();
-
-/* ====================================================================== *
- *  Guardrails UI — human-in-the-loop approval toasts
- * ====================================================================== */
-(function () {
-    const active = {};   // id -> toast element
-
-    socket.on('approval_request', (data) => {
-        if (!toastStack) return;
-        if (active[data.id]) return;          // dedupe
-        const el = document.createElement('div');
-        el.className = 'hud-toast glass approval';
-        el.innerHTML =
-            `<div class="hud-toast-title"><i class="fa-solid fa-hand"></i> ` +
-            `APPROVAL REQUIRED</div>` +
-            `<div class="hud-toast-body">${escapeHtml(data.summary || data.action)}</div>` +
-            `<div class="approval-actions">` +
-            `<button class="approval-btn approve" data-id="${data.id}">` +
-            `<i class="fa-solid fa-check"></i> APPROVE</button>` +
-            `<button class="approval-btn deny" data-id="${data.id}">` +
-            `<i class="fa-solid fa-xmark"></i> DENY</button>` +
-            `</div>`;
-        toastStack.appendChild(el);
-        requestAnimationFrame(() => el.classList.add('show'));
-        active[data.id] = el;
-
-        const resolve = (approved) => {
-            socket.emit('approval_response', { id: data.id, approved });
-            el.classList.remove('show');
-            setTimeout(() => el.remove(), 350);
-            delete active[data.id];
-            showToast(approved ? 'Approved' : 'Denied',
-                      `${data.action} ${approved ? 'resuming…' : 'cancelled.'}`,
-                      approved ? 'success' : 'error', 3000);
-        };
-        el.querySelector('.approve').addEventListener('click', () => resolve(true));
-        el.querySelector('.deny').addEventListener('click', () => resolve(false));
-        // auto-expire visually at timeout
-        setTimeout(() => {
-            if (active[data.id]) {
-                el.classList.remove('show');
-                setTimeout(() => el.remove(), 350);
-                delete active[data.id];
-            }
-        }, (data.timeout || 120) * 1000);
-    });
-})();
-
-/* ====================================================================== *
- *  R7 — Header/rail status widgets: circuit breaker + budget, polled
- *  from the existing /health endpoint.
- * ====================================================================== */
-(function () {
-    function fmtUsd(v) {
-        return '$' + Number(v).toFixed(2);
+    /* ── 6 · TRANSCRIPT SEARCH (memory drawer) ─────────────────────── */
+    const transcriptInput = $('transcript-search-input');
+    const transcriptBtn = $('transcript-search-btn');
+    const transcriptResults = $('transcript-results');
+    function doTranscriptSearch() {
+        const q = (transcriptInput.value || '').trim();
+        if (!q) return;
+        socket.emit('transcript_search', { query: q });
     }
+    if (transcriptBtn) transcriptBtn.addEventListener('click', doTranscriptSearch);
+    if (transcriptInput) transcriptInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') doTranscriptSearch();
+    });
+    socket.on('transcript_results', (data) => {
+        if (!transcriptResults) return;
+        const hits = data.results || [];
+        transcriptResults.innerHTML = hits.length
+            ? hits.map(h => `<div class="drow"><div class="grow"><span class="sub">${escapeHtml(h.snippet)}</span><span class="sub" style="color:var(--text-3)">${escapeHtml(h.created.slice(0, 16))}</span></div></div>`).join('')
+            : '<div class="no-data">no matches</div>';
+    });
 
+    /* ── 7 · REFLECTION (handled in missions block) ────────────────── */
+    socket.on('task_reflection', () => {});
+
+    /* ── 8 · GUARD/BUDGET + UPTIME (strip widgets) ─────────────────── */
+    function fmtUsd(v) { return '$' + Number(v).toFixed(2); }
+    function fmtUp(s) {
+        s = Math.floor(s || 0);
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        return h > 0 ? `${h}:${String(m).padStart(2, '0')}h` : `${m}m`;
+    }
     async function pollHealth() {
         try {
             const res = await fetch('/health');
             if (!res.ok) return;
             const d = await res.json();
-
-            // GUARD state
-            const guard = document.getElementById('w-guard');
+            const guard = $('w-guard');
             if (guard && d.circuit_breaker) {
                 const s = d.circuit_breaker;
                 guard.textContent = s.toUpperCase();
-                guard.className = 'rw-value num ' +
-                    (s === 'ok' ? 'ok' : s === 'degraded' ? 'warn' : 'fail');
+                guard.style.color = s === 'ok' ? 'var(--ok)' : s === 'degraded' ? 'var(--warn)' : 'var(--fail)';
             }
-
-            // BUDGET meter
             const b = d.budget || {};
-            const txt = document.getElementById('w-budget-text');
-            const bar = document.getElementById('w-budget-bar');
-            if (txt) txt.textContent =
-                `${fmtUsd(b.spent_usd || 0)} / ${fmtUsd(b.limit_usd || 0)}`;
-            if (bar) {
-                const pct = Math.min(100, b.pct || 0);
-                bar.style.width = pct + '%';
-                bar.style.background =
-                    pct >= 90 ? 'var(--fail)' :
-                    pct >= 70 ? 'var(--warn)' : 'var(--accent)';
-            }
-        } catch (_) { /* offline — leave last values */ }
+            const txt = $('w-budget-text');
+            if (txt) txt.textContent = `${fmtUsd(b.spent_usd)}/${fmtUsd(b.limit_usd)}`;
+            const tok = $('w-budget-tok');
+            if (tok) tok.textContent = String(b.spent_tokens || 0);
+            const up = $('strip-up');
+            if (up && d.uptime_s != null) up.textContent = fmtUp(d.uptime_s);
+        } catch (_) {}
     }
-
     pollHealth();
     setInterval(pollHealth, 5000);
+
+    /* ── 9 · LOG TICKER ────────────────────────────────────────────── */
+    const tickerLine = $('ticker-line');
+    let tickerLines = [], tickerIdx = 0;
+    function _sanitizeLog(s) {
+        return String(s)
+            .replace(/(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+/g, '$1***')
+            .replace(/((?:api[_-]?key|token|secret)[=: ]+)\S+/gi, '$1***')
+            .slice(0, 200);
+    }
+    async function pollLogs() {
+        try {
+            const res = await fetch('/api/logs?n=6');
+            if (!res.ok) return;
+            const d = await res.json();
+            if (Array.isArray(d.lines) && d.lines.length) {
+                tickerLines = d.lines.map(_sanitizeLog);
+                tickerIdx = tickerLines.length - 1;
+                if (tickerLine) tickerLine.textContent = tickerLines[tickerIdx];
+            }
+        } catch (_) {}
+    }
+    pollLogs();
+    setInterval(pollLogs, 6000);
+    setInterval(() => {
+        if (!tickerLines.length || !tickerLine) return;
+        tickerIdx = (tickerIdx + 1) % tickerLines.length;
+        tickerLine.textContent = tickerLines[tickerIdx];
+    }, 4000);
+
+    /* ── 10 · COMMAND PALETTE (⌘K / PAL) ───────────────────────────── */
+    const COMMANDS = [
+        { code: 'TSK', label: 'to-do list', act: () => openPanel('tasks-panel', 'tasks-btn') },
+        { code: 'NTS', label: 'notes', act: () => openPanel('notes-panel', 'notes-btn') },
+        { code: 'MEM', label: 'memory + transcript search', act: () => openPanel('memory-panel', 'memory-btn') },
+        { code: 'PPL', label: 'relationships', act: () => openPanel('people-panel', 'people-btn') },
+        { code: 'MTG', label: 'meeting mode', act: () => openPanel('meeting-panel', 'meeting-btn') },
+        { code: 'SEC', label: 'privacy', act: () => openPanel('privacy-panel', 'privacy-btn') },
+        { code: 'LIB', label: 'knowledge upload', act: () => openPanel('librarian-panel', 'librarian-btn') },
+        { code: 'SKL', label: 'skills & tools', act: () => openPanel('capabilities-panel', 'skills-btn') },
+        { code: 'VIS', label: 'vision scan', act: () => $('vision-btn') && $('vision-btn').click() },
+        { code: 'DEV', label: 'dev focus', act: () => $('dev-btn') && $('dev-btn').click() },
+        { code: 'MIS', label: 'missions stack', act: () => flashStack('stack-missions') },
+        { code: 'APR', label: 'approvals stack', act: () => flashStack('stack-approvals') },
+        { code: 'AUT', label: 'automations stack', act: () => flashStack('stack-automations') },
+        { code: 'HIST', label: 'mission history', act: () => { if (window.setMisView) setMisView('history'); flashStack('stack-missions'); } },
+    ];
+    const palBackdrop = $('palette-backdrop');
+    const palInput = $('palette-input');
+    const palList = $('palette-list');
+    let palSel = 0, palFiltered = COMMANDS;
+
+    function openPalette() {
+        if (!palBackdrop) return;
+        palBackdrop.classList.add('open');
+        if (palInput) palInput.value = '';
+        filterPalette('');
+        setTimeout(() => palInput && palInput.focus(), 0);
+    }
+    function closePalette() {
+        if (palBackdrop) palBackdrop.classList.remove('open');
+    }
+    function filterPalette(q) {
+        q = q.trim().toLowerCase();
+        palFiltered = COMMANDS.filter(c =>
+            !q || c.code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q));
+        palSel = 0;
+        renderPalette();
+    }
+    function renderPalette() {
+        if (!palList) return;
+        palList.innerHTML = palFiltered.map((c, i) =>
+            `<li class="${i === palSel ? 'sel' : ''}" data-i="${i}">
+                <span>${escapeHtml(c.label)}</span><span class="code">${c.code}</span>
+            </li>`).join('') || '<li><span>no match</span></li>';
+    }
+    function execPalette(i) {
+        const c = palFiltered[i];
+        if (!c) return;
+        closePalette();
+        c.act();
+    }
+    if (palInput) palInput.addEventListener('input', () => filterPalette(palInput.value));
+    if (palInput) palInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') { palSel = Math.min(palSel + 1, palFiltered.length - 1); renderPalette(); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { palSel = Math.max(palSel - 1, 0); renderPalette(); e.preventDefault(); }
+        else if (e.key === 'Enter') { execPalette(palSel); e.preventDefault(); }
+        else if (e.key === 'Escape') closePalette();
+    });
+    if (palList) palList.addEventListener('click', (e) => {
+        const li = e.target.closest('li[data-i]');
+        if (li) execPalette(Number(li.dataset.i));
+    });
+    if (palBackdrop) palBackdrop.addEventListener('click', (e) => {
+        if (e.target === palBackdrop) closePalette();
+    });
+    const palBtn = $('palette-btn');
+    if (palBtn) palBtn.addEventListener('click', openPalette);
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            if (palBackdrop && palBackdrop.classList.contains('open')) closePalette();
+            else openPalette();
+        }
+    });
 })();

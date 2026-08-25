@@ -1,0 +1,91 @@
+"""
+Model catalog — capabilities + context windows for routing decisions.
+
+The catalog only needs to be right about the models Jarvis actually
+ships defaults for; everything else falls through to name heuristics
+(``caps_for``) which are deliberately optimistic: a false "yes" for
+tools/vision just means the model may error and the router fails over.
+"""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    provider: str
+    model: str
+    context: int = 32768
+    vision: bool = False
+    tools: bool = True
+    json_mode: bool = True
+
+
+# provider:model → overrides.  Contexts are conservative published maxima.
+CATALOG = {
+    # --- Groq --------------------------------------------------------- #
+    "groq:openai/gpt-oss-120b":        dict(context=131072),
+    "groq:openai/gpt-oss-20b":         dict(context=131072),
+    "groq:groq/compound-mini":         dict(context=131072),
+    "groq:qwen/qwen3.6-27b":           dict(context=131072),
+    "groq:llama-3.3-70b-versatile":    dict(context=131072, vision=False),
+    "groq:meta-llama/llama-4-scout-17b-16e-instruct":
+        dict(context=131072, vision=True),
+    "groq:meta-llama/llama-4-maverick-17b-128e-instruct":
+        dict(context=131072, vision=True),
+
+    # --- Google Gemini ------------------------------------------------ #
+    "google:gemini-2.5-flash":         dict(context=1048576, vision=True),
+    "google:gemini-2.5-pro":           dict(context=1048576, vision=True),
+    "google:gemini-2.0-flash":         dict(context=1048576, vision=True),
+
+    # --- Anthropic ---------------------------------------------------- #
+    "anthropic:claude-sonnet-4-5":     dict(context=200000, vision=True),
+    "anthropic:claude-sonnet-4-20250514": dict(context=200000, vision=True),
+    "anthropic:claude-3-7-sonnet-latest": dict(context=200000, vision=True),
+    "anthropic:claude-3-5-haiku-latest":  dict(context=200000, vision=True),
+
+    # --- OpenAI ------------------------------------------------------- #
+    "openai:gpt-4o":                   dict(context=128000, vision=True),
+    "openai:gpt-4o-mini":              dict(context=128000, vision=True),
+    "openai:gpt-4.1":                  dict(context=1047576, vision=True),
+    "openai:gpt-4.1-mini":             dict(context=1047576, vision=True),
+    "openai:gpt-4.1-nano":             dict(context=1047576, vision=True),
+
+    # --- DeepSeek ----------------------------------------------------- #
+    "deepseek:deepseek-chat":          dict(context=65536, vision=False),
+    "deepseek:deepseek-reasoner":      dict(context=65536, vision=False),
+
+    # --- OpenRouter --------------------------------------------------- #
+    "openrouter:openrouter/auto":      dict(context=200000, vision=True),
+}
+
+# Name fragments that imply vision support when a model is unknown.
+_VISION_HINTS = ('vl', 'vision', 'gpt-4o', 'gpt-4.1', 'gpt-5', 'gemini',
+                 'claude', 'pixtral', 'llama-4', 'llava', 'qwen-vl',
+                 'dots.ocr', 'multimodal')
+
+
+def caps_for(provider, model):
+    """ModelInfo for any (provider, model), catalog first, heuristics second."""
+    key = f"{provider}:{model}"
+    if key in CATALOG:
+        return ModelInfo(provider=provider, model=model,
+                         **CATALOG[key])
+    low = (model or '').lower()
+    vision = any(h in low for h in _VISION_HINTS)
+    return ModelInfo(provider=provider, model=model,
+                     context=32768, vision=vision)
+
+
+def has_caps(provider, model, require):
+    """True when the model satisfies every required capability string."""
+    if not require:
+        return True
+    info = caps_for(provider, model)
+    checks = {
+        'vision': info.vision,
+        'tools': info.tools,
+        'json': info.json_mode,
+        'long_context': info.context >= 100000,
+    }
+    return all(checks.get(cap, True) for cap in require)

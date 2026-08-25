@@ -131,9 +131,19 @@ Say **"Jarvis"** in the browser to wake him, or just type commands.
 
 See `.env.example` for every setting. The most important:
 
-- `GROQ_API_KEY` — **required** for the brain (or `GOOGLE_API_KEY` as fallback)
+- **Any ONE of** `GROQ_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`,
+  a local Ollama/LM Studio server, or any OpenAI-compatible
+  `CUSTOM_OPENAI_BASE_URL` — Jarvis routes across every configured
+  provider with automatic failover, quota cooldowns and capability-aware
+  model selection (vision requests go to vision models; tools to
+  tool-capable ones).
+- Keys can also be added at runtime (no restart) via the dashboard —
+  they persist in `config/providers.json` (chmod 600, never logged).
+- Provider priority: `JARVIS_PROVIDER_ORDER=google,groq,anthropic,...`
+  or `JARVIS_PREFER_LOCAL=1` to try Ollama/LM Studio first.
 - `TELEGRAM_TOKEN` + `TELEGRAM_ALLOWED_IDS` — remote control
-- `GROQ_MODELS` — override the default model list (current: `openai/gpt-oss-120b,openai/gpt-oss-20b,groq/compound-mini,qwen/qwen3.6-27b`)
+- `GROQ_MODELS` — override the default Groq model list
 
 ## Troubleshooting
 
