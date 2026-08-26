@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. · SETUP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-0:#050607; --bg-1:#0B0D0F; --bg-2:#111417;
+            --line:#1E252D; --line-strong:#333D48;
+            --text-1:#E8EAED; --text-2:#98A2AD; --text-3:#5A636D;
+            --accent:#FFB000; --accent-dim:rgba(255,176,0,.10);
+            --accent-line:rgba(255,176,0,.35);
+            --ok:#3FC874; --fail:#FF5D5D;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background:var(--bg-0); color:var(--text-1);
+            font-family:'IBM Plex Mono', monospace;
+            min-height:100vh; padding:32px 20px;
+        }
+        .wrap { max-width:720px; }
+        h1 { font-size:16px; font-weight:600; letter-spacing:.14em; }
+        h1 span { color:var(--accent); }
+        .sub { font-size:10px; color:var(--text-3); letter-spacing:.14em;
+               text-transform:uppercase; margin-top:6px; }
+        .step-head {
+            display:flex; gap:10px; align-items:baseline;
+            border-bottom:1px solid var(--line-strong);
+            padding:22px 0 8px; margin-top:26px;
+        }
+        .step-num { color:var(--accent); font-size:11px; letter-spacing:.14em; }
+        .step-title { font-size:12px; letter-spacing:.14em;
+                      text-transform:uppercase; color:var(--text-1); }
+        .step-body { padding:12px 0; font-size:12px; color:var(--text-2);
+                     line-height:1.7; }
+        .grid { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+        .prov-btn {
+            background:transparent; border:1px solid var(--line);
+            color:var(--text-2); font-family:inherit; font-size:10px;
+            letter-spacing:.1em; padding:7px 12px; cursor:pointer;
+            text-transform:uppercase;
+        }
+        .prov-btn:hover { border-color:var(--accent-line); color:var(--accent); }
+        .prov-btn.active { border-color:var(--accent); color:var(--accent);
+                           background:var(--accent-dim); }
+        .row { display:flex; gap:6px; margin-top:10px; }
+        input[type=text], input[type=password] {
+            flex:1; background:var(--bg-1); border:1px solid var(--line);
+            border-left:none; color:var(--text-1); font-family:inherit;
+            font-size:12px; padding:9px 10px; outline:none;
+        }
+        input:focus { border-color:var(--accent-line); }
+        button.go {
+            background:var(--accent); color:#131108; border:1px solid var(--accent);
+            font-family:inherit; font-size:10px; letter-spacing:.12em;
+            padding:9px 16px; cursor:pointer; text-transform:uppercase;
+        }
+        button.go:hover { filter:brightness(1.1); }
+        button.go:disabled { opacity:.4; cursor:default; }
+        .fleet { margin-top:10px; font-size:11px; line-height:1.9; }
+        .st-ok  { color:var(--ok); }
+        .st-off { color:var(--text-3); }
+        .note { font-size:10px; color:var(--text-3); letter-spacing:.1em;
+                margin-top:14px; text-transform:uppercase; }
+        a.enter {
+            display:inline-block; margin-top:12px;
+            background:var(--accent); color:#131108; text-decoration:none;
+            font-size:11px; letter-spacing:.14em; padding:10px 18px;
+        }
+        .err { color:var(--fail); font-size:11px; margin-top:8px; }
+        .kicker { color:var(--accent); }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>J.A.R.V.I.S. <span>·</span> FIRST-RUN SETUP</h1>
+    <div class="sub">bring your own key · any provider · failover automatic</div>
+
+    <div class="step-head">
+        <span class="step-num">01</span><span class="step-title">Pick a provider</span>
+    </div>
+    <div class="step-body">
+        Any ONE key brings Jarvis online. Add more later from the
+        dashboard (<span class="kicker">LLM</span> panel) — they stack into
+        the failover chain.
+        <div class="grid" id="prov-grid"></div>
+    </div>
+
+    <div class="step-head">
+        <span class="step-num">02</span><span class="step-title">Paste your API key</span>
+    </div>
+    <div class="step-body">
+        <div class="row">
+            <input type="password" id="key-input" placeholder="paste api key"
+                   autocomplete="off" spellcheck="false">
+            <button class="go" id="save-btn">ACTIVATE</button>
+        </div>
+        <div class="err" id="err"></div>
+        <div class="note">stored in config/providers.json · chmod 600 · never logged</div>
+    </div>
+
+    <div class="step-head">
+        <span class="step-num">03</span><span class="step-title">Fleet status</span>
+    </div>
+    <div class="step-body">
+        <div class="fleet" id="fleet">SYNCING…</div>
+    </div>
+
+    <div class="step-head">
+        <span class="step-num">04</span><span class="step-title">Enter</span>
+    </div>
+    <div class="step-body">
+        <a class="enter" href="/">OPEN OPS DECK →</a>
+        <div class="note">say "Jarvis" in the browser, or type in the command line · optional: config/mcp_servers.json adds external tool servers</div>
+    </div>
+</div>
+
+<script>
+const PROVIDERS = [
+    ['groq', 'console.groq.com', 'free tier available'],
+    ['google', 'aistudio.google.com', 'generous free tier'],
+    ['openai', 'platform.openai.com', ''],
+    ['anthropic', 'console.anthropic.com', ''],
+    ['deepseek', 'platform.deepseek.com', 'very cheap'],
+    ['openrouter', 'openrouter.ai', '400+ models, one key'],
+];
+let picked = null;
+
+const grid = document.getElementById('prov-grid');
+grid.innerHTML = PROVIDERS.map(([name, src, tag]) =>
+    `<button class="prov-btn" data-p="${name}" title="${src}">${name}${tag ? ' ·' + tag : ''}</button>`
+).join('');
+grid.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-p]');
+    if (!b) return;
+    document.querySelectorAll('.prov-btn').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    picked = b.dataset.p;
+});
+
+async function refresh() {
+    try {
+        const res = await fetch('/api/providers');
+        const d = await res.json();
+        const online = new Set((d.providers || []).map(p => p.name));
+        document.getElementById('fleet').innerHTML =
+            Object.keys(d.keys || {}).map(k => {
+                const cfg = d.keys[k].configured;
+                return `${k.padEnd(12)} ${cfg ? '<span class="st-ok">[ CONFIGURED ]</span>'
+                                              : '<span class="st-off">[ -- ]</span>'}`;
+            }).join('<br>');
+        return online;
+    } catch (_) {
+        document.getElementById('fleet').textContent = 'server unreachable';
+        return new Set();
+    }
+}
+
+document.getElementById('save-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('save-btn');
+    const err = document.getElementById('err');
+    err.textContent = '';
+    if (!picked) { err.textContent = 'Pick a provider first (step 01).'; return; }
+    const key = document.getElementById('key-input').value.trim();
+    if (!key) { err.textContent = 'Paste an API key.'; return; }
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/providers', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({provider: picked, api_key: key})
+        });
+        const d = await res.json();
+        if (!d.ok) { err.textContent = d.error || 'rejected'; return; }
+        document.getElementById('key-input').value = '';
+        await refresh();
+    } catch (_) {
+        err.textContent = 'Network error.';
+    } finally { btn.disabled = false; }
+});
+
+refresh();
+</script>
+</body>
+</html>

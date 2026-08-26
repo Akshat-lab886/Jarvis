@@ -88,9 +88,11 @@ class GeminiProvider(BaseProvider):
         from google.genai import types
 
         contents, system = self._build_contents(messages)
+        # NOTE: this google-genai version validates GenerateContentConfig
+        # strictly — per-request HTTP timeouts are NOT a config field
+        # (they belong on the Client).  Keep the config schema-clean.
         cfg_kwargs = {
             "temperature": temperature,
-            "http_options_timeout": timeout * 1000,
         }
         if system:
             cfg_kwargs["system_instruction"] = system

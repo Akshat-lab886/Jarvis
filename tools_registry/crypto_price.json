@@ -1,0 +1,11 @@
+{
+  "name": "crypto_price",
+  "description": "Current crypto prices in fiat currencies (CoinGecko)",
+  "method": "GET",
+  "url": "https://api.coingecko.com/api/v3/simple/price",
+  "params": {
+    "ids": {"type": "string", "required": true, "description": "comma-separated coin ids, e.g. bitcoin,ethereum"},
+    "vs_currencies": {"type": "string", "required": false, "description": "fiat currencies (default usd)"}
+  },
+  "timeout": 10
+}

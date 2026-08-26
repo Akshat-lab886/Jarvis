@@ -103,3 +103,27 @@ Amber on near-black is THE identity (Bloomberg's signature). State
 colors: green=ok, amber=warn/active, red=fail. Themes swap ONLY the
 accent hue (command=phosphor green #37E06E, brutalist=#FF4747,
 zen=#B9A6FF, vault=#5AB8FF). Never introduce a second decorative hue.
+
+## 9 · CINEMATIC LAYER (v6 — HOLO-DECK)
+
+The console earns a cinematic layer BECAUSE it is disciplined. These
+are the ONLY ornamental devices allowed, everywhere else stays strict:
+
+1. **HERO GAUGE** — a 190px triple-arc reactor (CPU/RAM/DISK arcs,
+   amber core) is the transcript's idle centerpiece. It shows real
+   live values. It hides once conversation flows (>2 messages).
+   Glow permitted HERE only: ≤ `0 0 18px rgba(255,176,0,.18)`.
+2. **VIGNETTE** — body background: radial gradient
+   `radial-gradient(1200px at 50% 40%, #0C0F13, #050607)`. Never flat.
+3. **SCANLINES** — fixed overlay, 2px repeat at 2.5% white. Subtle
+   materiality. Never animated.
+4. **CORNER BRACKETS** — 4 fixed HUD frame brackets (amber 35%,
+   18×18 L-shapes) at viewport corners.
+5. **WAVEFORM** — 24-bar live strip in the transcript header. Bars
+   2px, amber-dim, animated at ~12fps via rAF (cheap). Represents
+   audio state; idle = low noise floor.
+6. **BIG NUMERALS** — vital values render 22px mono amber; labels 9px.
+   The rail reads as instrumentation, not a table.
+
+Everything in §1–§8 still applies. Glow on anything other than the
+hero/core = violation. Gradients other than the vignette = violation.

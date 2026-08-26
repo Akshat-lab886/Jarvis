@@ -38,3 +38,12 @@ __pycache__/
 
 # OS / editor
 .DS_Store
+
+# Runtime BYOK keystore & MCP config (may hold live keys)
+config/providers.json
+config/mcp_servers.json
+
+# Personal memory / runtime state
+episodic_memory.json
+jobs.json
+transcript.json

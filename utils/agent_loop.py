@@ -154,13 +154,18 @@ class AgentLoop:
     @property
     def executor(self):
         # Lazy import breaks the brain↔executor cycle; by call time the
-        # server module is fully initialised.
+        # server module is fully initialised.  Tests may inject a stand-in
+        # via ``loop._executor``.
+        injected = getattr(self, '_executor', None)
+        if injected is not None:
+            return injected
         from utils.server import executor
         return executor
 
     def _exec_tool(self, name, arguments):
         """
         Execute one tool call through the Executor with TTS/UI suppressed.
+        MCP tools (``mcp__server__tool``) route to the MCP pool instead.
         Returns the string result fed back to the model.
         """
         try:
@@ -169,6 +174,15 @@ class AgentLoop:
                 args = {}
         except json.JSONDecodeError:
             return f"ERROR: arguments were not valid JSON: {arguments[:200]}"
+
+        # ---- MCP external tools ------------------------------------ #
+        if name.startswith('mcp__'):
+            try:
+                from utils.mcp_client import get_pool, MCPServerError
+                out = get_pool().call(name, args)
+                return str(out or f"{name}: done.")[:TOOL_OUTPUT_CAP]
+            except Exception as e:
+                return f"ERROR executing {name}: {e}"[:TOOL_OUTPUT_CAP]
 
         command = dict(args)
         if name == 'any_action':
@@ -214,7 +228,7 @@ class AgentLoop:
 
     # ---------------- one model turn ---------------- #
 
-    def _turn(self, messages, ui_callback, stream):
+    def _turn(self, messages, ui_callback, stream, tools=None):
         """
         Request one completion with tools attached.  Returns a dict:
           {'text': str, 'tool_calls': [ToolCall], 'finish': str}
@@ -232,8 +246,22 @@ class AgentLoop:
         usage = None
         provider = model = ''
 
+        # JARVIS_AGENT_MODEL pins the agent brain, e.g.
+        # "groq:openai/gpt-oss-120b" — strongest model for multi-step
+        # reasoning while chat stays on cheap defaults.  Ignored when
+        # the pin matches nothing in the current fleet (full failover).
+        preferred = None
+        pin = os.getenv('JARVIS_AGENT_MODEL', '').strip()
+        if pin:
+            try:
+                if router._chain(models=[pin]):
+                    preferred = [pin]
+            except Exception:
+                preferred = None
+
         result = router.chat(messages, require={'tools'},
-                             tools=list(TOOL_SPECS), stream=stream)
+                             tools=tools or list(TOOL_SPECS),
+                             models=preferred, stream=stream)
 
         if hasattr(result, 'tool_calls'):          # blocking ChatResult
             return {'text': result.text or '',
@@ -257,6 +285,20 @@ class AgentLoop:
                                    f'tool call(s)'})
             return {'text': '', 'tool_calls': saw_tool_calls,
                     'finish': finish or 'tool_calls', 'usage': None}
+        # Weak models may still wrap replies in legacy action-JSON;
+        # normalize BEFORE streaming so the UI never sees raw JSON.
+        stripped = text.strip()
+        if stripped.startswith('{') and '"action"' in stripped[:60]:
+            try:
+                wrapped = json.loads(stripped)
+                if isinstance(wrapped, dict) \
+                        and wrapped.get('action') == 'chat':
+                    inner = str(wrapped.get('response', '')).strip()
+                    if inner:
+                        buffered = [inner]
+                        text = inner
+            except json.JSONDecodeError:
+                pass
         # Final answer — replay the buffer as a live stream burst.
         for piece in buffered:
             self._emit(ui_callback, 'ai_text_stream', {'delta': piece})
@@ -288,8 +330,39 @@ class AgentLoop:
 
         stream_enabled = os.getenv('JARVIS_AGENT_STREAM', '1') != '0'
 
-        messages = [{"role": "system",
-                     "content": system_instruction or "You are Jarvis."}]
+        # Fleet tools = curated core + any live MCP servers' tools.
+        fleet_tools = list(TOOL_SPECS)
+        try:
+            from utils.mcp_client import get_pool
+            mcp_specs = get_pool().agent_tool_specs()
+            if mcp_specs:
+                fleet_tools.extend(mcp_specs)
+                logger.info("MCP adds %d external tool(s)",
+                            len(mcp_specs))
+        except Exception as e:
+            logger.warning("MCP tool discovery skipped: %s", e)
+        fleet_tools = fleet_tools[:40]   # prompt-budget guard
+
+        # Override the legacy "output ONLY action JSON" law: in agent
+        # mode the model talks to tools natively and answers like Jarvis.
+        # The old law sits in the FIRST sentence of the persona, where
+        # weak models weight it heaviest — neutralize it there too.
+        sys_text = system_instruction or "You are Jarvis."
+        sys_text = sys_text.replace(
+            "Output ONLY valid parsed JSON - never markdown blocks, "
+            "never 'Action:' format.",
+            "You act through native TOOL CALLS. Never print "
+            "'Action:' lines or raw action JSON.", 1)
+        agent_directive = (
+            "\n\nAGENT MODE ACTIVE — you have REAL TOOLS attached. "
+            "Call tools whenever they help fulfil the request; chain "
+            "multiple calls if needed. When no tool is required "
+            "(conversation, opinion, explanation), simply answer "
+            "directly. Address the user as 'Sir'. NEVER reply with "
+            "'Action: <name>' text — instead CALL the matching tool; "
+            "for anything unlisted use the any_action tool.")
+        sys_text += agent_directive
+        messages = [{"role": "system", "content": sys_text}]
         for old_user, old_ai in (history_snapshot or []):
             messages.append({"role": "user", "content": old_user})
             messages.append({"role": "assistant", "content": old_ai})
@@ -316,7 +389,8 @@ class AgentLoop:
             try:
                 turn = self._turn(
                     messages, ui_callback,
-                    stream=stream_enabled and steps <= self.max_steps - 1)
+                    stream=stream_enabled and steps <= self.max_steps - 1,
+                    tools=fleet_tools)
             except Exception as e:
                 logger.warning("agent turn failed (%d/%d): %s",
                                steps, self.max_steps, e)
@@ -353,8 +427,19 @@ class AgentLoop:
                     })
                 continue
 
-            # No tools → this is the final answer.
+            # No tools → this is the final answer.  Weak models may
+            # still wrap their reply in legacy action-JSON; unwrap it.
             final = (turn['text'] or '').strip()
+            if final.startswith('{') and '"action"' in final[:60]:
+                try:
+                    wrapped = json.loads(final)
+                    if isinstance(wrapped, dict) \
+                            and wrapped.get('action') == 'chat':
+                        inner = str(wrapped.get('response', '')).strip()
+                        if inner:
+                            final = inner
+                except json.JSONDecodeError:
+                    pass
             if final:
                 self.brain._append_history(prompt, final)
                 logger.info("agent loop done in %d step(s), %.1fs",

@@ -169,6 +169,27 @@ ROUTING RULES
         router = getattr(self, 'router', None)
         return bool(router and len(router.providers))
 
+    # ------------------------------------------------------------------ #
+    # Phase 2 agent core: native tool-calling loop
+    # ------------------------------------------------------------------ #
+    def _agent_mode_ok(self):
+        """
+        Agent loop eligibility.  JARVIS_AGENT_MODE:
+          'auto' (default) → on when the fleet offers tool-capable models
+          'on'             → force (falls back to legacy when impossible)
+          'off'            → pure legacy routing
+        """
+        from utils.agent_loop import agent_tools_enabled
+        if not agent_tools_enabled():
+            return False
+        router = getattr(self, 'router', None)
+        if router is None or len(router.providers) == 0:
+            return False
+        try:
+            return bool(router._chain(require={'tools'}))
+        except Exception:
+            return False
+
     def inject_knowledge(self, text):
         """Inject knowledge into short-term memory with a timestamp."""
         self.short_term_memory = text
@@ -890,6 +911,26 @@ ROUTING RULES
                         current_system_instruction += f"\n\n{profile_summary}"
             except Exception:
                 pass
+
+        # --- Phase 2: native tool-calling agent loop ---------------------
+        # Runs BEFORE legacy single-shot routing.  On any failure or
+        # ineligibility it returns None and the legacy paths below take
+        # over unchanged (rollback = JARVIS_AGENT_MODE=off).
+        if self._agent_mode_ok():
+            try:
+                from utils.agent_loop import get_agent_loop
+                with self.history_lock:
+                    _agent_history = list(self.history)
+                agent_res = get_agent_loop(self).run(
+                    prompt, image_path=image_path,
+                    system_instruction=current_system_instruction,
+                    history_snapshot=_agent_history,
+                    ui_callback=getattr(self, 'ui_emit', None))
+                if agent_res is not None:
+                    return agent_res
+            except Exception as agent_err:
+                print(f"Brain: agent loop failed → legacy path "
+                      f"({agent_err})")
 
         # Try Gemini Direct — legacy single-provider path, only when the
         # router fleet isn't already covering Google (avoids double-billing

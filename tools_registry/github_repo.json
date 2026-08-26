@@ -1,0 +1,12 @@
+{
+  "name": "github_repo",
+  "description": "Public GitHub repository metadata: stars, forks, language, description",
+  "method": "GET",
+  "url": "https://api.github.com/repos/{owner}/{repo}",
+  "params": {
+    "owner": {"type": "string", "required": true, "description": "repo owner/org"},
+    "repo": {"type": "string", "required": true, "description": "repository name"}
+  },
+  "headers": {"Accept": "application/vnd.github+json", "User-Agent": "JarvisAssistant/1.0"},
+  "timeout": 10
+}

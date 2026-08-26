@@ -210,9 +210,26 @@ def start_server():
 def send_to_ui(event, data):
     socketio.emit(event, data)
 
+# Phase 2 agent core: give the brain a direct line to the dashboard so
+# streamed tokens (ai_text_stream) reach the transcript from EVERY
+# surface — voice loop, Telegram, webhook — not just socket handlers.
+brain.ui_emit = send_to_ui
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/api/vitals')
+def api_vitals():
+    """REST snapshot of system vitals — first-paint fallback for the
+    HUD (socket stream stays authoritative once connected)."""
+    try:
+        return jsonify(executor.tools.get_system_vitals())
+    except Exception as e:
+        return jsonify({'cpu': 0, 'ram': 0, 'disk': 0,
+                        'battery': 100, 'error': str(e)})
+
 
 @app.route('/health')
 def health():
@@ -234,6 +251,7 @@ def health():
         'time': datetime.datetime.now().isoformat(timespec='seconds'),
         'uptime_s': round(time.time() - _SERVER_START, 1),
         'brain_active': brain.active if hasattr(brain, 'active') else False,
+        'needs_onboarding': _needs_onboarding(),
         'llm_fleet': fleet,
         'circuit_breaker': get_breaker().report.status,
         'budget': get_budget().status(),
@@ -267,6 +285,21 @@ def api_logs():
     return jsonify({'lines': lines})
 
 
+def _needs_onboarding():
+    """True until ANY LLM provider is configured (first-run signal)."""
+    try:
+        router = getattr(brain, 'router', None)
+        return not (router and len(router.providers) > 0)
+    except Exception:
+        return True
+
+
+@app.route('/onboarding')
+def onboarding():
+    """First-run setup wizard: bring your own key, go live in a minute."""
+    return render_template('onboarding.html')
+
+
 # --------------------------------------------------------------------- #
 # BYOK provider management — bring any key at runtime, no restart.
 # Mutations require the webhook key when JARVIS_WEBHOOK_KEY is set.
@@ -288,7 +321,28 @@ def _provider_gate():
 @app.route('/api/providers')
 def providers_status():
     from utils.llm import get_router
-    return jsonify({'ok': True, **get_router().describe()})
+    payload = {'ok': True, **get_router().describe()}
+    try:
+        from utils.mcp_client import get_pool
+        payload['mcp'] = get_pool().status()
+    except Exception:
+        payload['mcp'] = []
+    return jsonify(payload)
+
+
+@app.route('/api/mcp/reload', methods=['POST'])
+def mcp_reload():
+    """Re-read config/mcp_servers.json (restarts all MCP servers)."""
+    gate = _provider_gate()
+    if gate is not None:
+        return gate
+    try:
+        from utils.mcp_client import reload_pool
+        pool = reload_pool()
+        pool.ensure_started()
+        return jsonify({'ok': True, 'servers': pool.status()})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/providers', methods=['POST'])

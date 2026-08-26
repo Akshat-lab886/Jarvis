@@ -1,0 +1,10 @@
+{
+  "name": "ip_geoloc",
+  "description": "Look up geographic/network info for an IPv4 or IPv6 address",
+  "method": "GET",
+  "url": "http://ip-api.com/json/{ip}",
+  "params": {
+    "ip": {"type": "string", "required": true, "description": "IP address to locate"}
+  },
+  "timeout": 8
+}

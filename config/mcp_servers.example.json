@@ -1,0 +1,13 @@
+[
+  {
+    "name": "files",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/jarvis-sandbox"]
+  },
+  {
+    "name": "memory",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-memory"],
+    "env": {"MEMORY_FILE_PATH": "/tmp/jarvis-mcp-memory.json"}
+  }
+]

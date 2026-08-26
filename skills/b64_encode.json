@@ -1,0 +1,12 @@
+{
+  "name": "b64_encode",
+  "display_name": "b64_encode",
+  "description": "Base64-encode text (or decode when mode=decode)",
+  "params": {
+    "text": "text to encode/decode",
+    "mode": "encode (default) | decode"
+  },
+  "code": "import base64\nm = '{{mode}}'.strip().lower() or 'encode'\nraw = '''{{text}}'''\nif m == 'decode':\n    print(base64.b64decode(raw).decode('utf-8', 'replace'))\nelse:\n    print(base64.b64encode(raw.encode()).decode())",
+  "created_at": "2026-08-26T11:31:02.644365",
+  "runs": 0
+}

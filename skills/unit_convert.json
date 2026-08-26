@@ -1,0 +1,14 @@
+{
+  "name": "unit_convert",
+  "display_name": "unit_convert",
+  "description": "Convert units: km_mi, mi_km, kg_lb, lb_kg, c_f, f_c",
+  "params": {
+    "value": "numeric value",
+    "conversion": "km_mi|mi_km|kg_lb|lb_kg|c_f|f_c"
+  },
+  "code": "v = float('{{value}}')\nc = '{{conversion}}'.strip().lower()\nimport math\nfns = {\n 'km_mi': lambda x: x*0.621371,\n 'mi_km': lambda x: x/0.621371,\n 'kg_lb': lambda x: x*2.20462,\n 'lb_kg': lambda x: x/2.20462,\n 'c_f': lambda x: x*9/5+32,\n 'f_c': lambda x: (x-32)*5/9,\n}\nif c not in fns:\n    raise SystemExit(f'unknown conversion {c!r}; options: {sorted(fns)}')\nprint(f'{v} {c.split(chr(95))[0]} = {round(fns[c](v), 4)} {c.split(chr(95))[1]}')",
+  "created_at": "2026-08-26T11:31:02.644081",
+  "runs": 1,
+  "last_run": "2026-08-26T11:37:14.137367",
+  "last_success": true
+}

@@ -1,0 +1,11 @@
+{
+  "name": "iso_to_epoch",
+  "display_name": "iso_to_epoch",
+  "description": "Convert an ISO-8601 date/time string to unix epoch seconds",
+  "params": {
+    "iso_time": "e.g. 2026-08-26T15:30:00"
+  },
+  "code": "from datetime import datetime\ns = '{{iso_time}}'.strip().replace('Z', '+00:00')\ndt = datetime.fromisoformat(s)\nprint(int(dt.timestamp()))",
+  "created_at": "2026-08-26T11:31:02.644264",
+  "runs": 0
+}

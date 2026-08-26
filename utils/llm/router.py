@@ -113,7 +113,10 @@ class Router:
                 for w in wanted:
                     if ':' in w:
                         wp, wm = w.split(':', 1)
-                        if wp == pname:
+                        if wp == pname and (
+                                wm in provider.models
+                                or getattr(provider, 'dynamic_models',
+                                           False)):
                             pmodels.append(wm)
                     elif w == pname:
                         pmodels = list(provider.models)
@@ -188,7 +191,8 @@ class Router:
     # ---------------------------------------------------------------- #
     # Public API
 
-    def chat(self, messages, *, require=None, models=None, max_tokens=None,
+    def chat(self, messages, *, require=None, models=None, tools=None,
+             max_tokens=None,
              temperature=0.2, timeout=45, stream=False, purpose="chat"):
         """
         Run one completion across the fleet.  Returns ChatResult (or a
@@ -214,7 +218,8 @@ class Router:
             logger.info("LLM %s via %s/%s", purpose, provider.name, model)
             try:
                 result = provider.chat(
-                    messages, model=model, max_tokens=max_tokens,
+                    messages, model=model, tools=tools,
+                    max_tokens=max_tokens,
                     temperature=temperature, timeout=timeout,
                     stream=stream)
             except Exception as err:

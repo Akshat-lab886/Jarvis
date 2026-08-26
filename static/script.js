@@ -119,8 +119,63 @@ socket.on('status', (data) => {
 // AI text responses
 socket.on('ai_text', (data) => {
     console.log('🤖 AI:', data.text);
+    // Agent-loop streaming already rendered this answer live —
+    // skip the duplicate final emission when content matches.
+    if (_streamState.text && data.text &&
+        data.text.trim() === _streamState.text.trim()) {
+        finalizeStream();
+        return;
+    }
+    finalizeStream();
     addMessage(`JARVIS: ${data.text}`);
     setCoreState('speaking');
+});
+
+// --- Phase 2: agent-core token streaming ---
+const _streamState = { row: null, body: null, text: '' };
+let _lastStreamed = '';
+
+function finalizeStream() {
+    if (_streamState.row) {
+        _streamState.row.classList.remove('streaming');
+    }
+    _streamState.row = null;
+    _streamState.body = null;
+    if (_streamState.text) _lastStreamed = _streamState.text;
+    _streamState.text = '';
+}
+
+socket.on('ai_text_stream', (data) => {
+    const delta = data.delta || '';
+    if (!delta) return;
+    setCoreState('speaking');
+    if (!_streamState.row) {
+        const intro = document.getElementById('intro-msg');
+        if (intro) intro.remove();
+        // Ops-deck grammar — identical to addMessage('JARVIS: …').
+        const row = document.createElement('div');
+        const ts = new Date().toLocaleTimeString('en-US',
+            { hour12: false });
+        row.className = 'msg j streaming';
+        row.innerHTML =
+            `<span class="ts num">${ts}</span>` +
+            `<span class="dir">\u00AB</span>` +
+            `<span class="body prose"></span>`;
+        messageContainer.appendChild(row);
+        messageContainer.scrollTop = messageContainer.scrollHeight;
+        _streamState.row = row;
+        _streamState.body = row.querySelector('.body');
+        _streamState.text = '';
+        if (window._updateHero) window._updateHero();
+    }
+    _streamState.text += delta;
+    _streamState.body.textContent =
+        _streamState.body.textContent + delta;
+    messageContainer.scrollTo({ top: messageContainer.scrollHeight });
+});
+
+socket.on('ai_text_stream_end', () => {
+    finalizeStream();
 });
 
 // Live Terminal Logging
@@ -177,7 +232,19 @@ function _drawSpark(id, data) {
     poly.setAttribute('points', pts);
 }
 
-socket.on('system_vitals', (vitals) => {
+function _setArc(id, pct) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const r = Number(el.getAttribute('r')) || 80;
+    const C = 2 * Math.PI * r;
+    el.style.strokeDasharray = String(C);
+    el.style.strokeDashoffset = String(C * (1 - Math.min(100, Math.max(0, pct)) / 100));
+}
+
+/* VITALS PAINTER — single writer for every vitals-driven pixel.
+   Fed by the socket stream (authoritative, 2s cadence) and seeded
+   once from REST so first paint never shows a dead instrument. */
+window.__emitVitals = function (vitals) {
     // CPU
     const cpuBar = document.getElementById('cpu-bar');
     const cpuValue = document.getElementById('cpu-value');
@@ -217,12 +284,40 @@ socket.on('system_vitals', (vitals) => {
         diskValue.textContent = vitals.disk + '%';
     }
 
+    // Hero gauge arcs (R: 86/72/58)
+    _setArc('arc-cpu', vitals.cpu);
+    _setArc('arc-ram', vitals.ram);
+    _setArc('arc-dsk', vitals.disk);
+    const hc = document.getElementById('hero-cpu');
+    if (hc) hc.textContent = String(vitals.cpu);
+    const hs = document.getElementById('hero-status');
+    if (hs) {
+        // Real fleet state beats a static slogan (density law).
+        const n = (window._fleetOnline != null) ? window._fleetOnline : null;
+        hs.textContent =
+            vitals.cpu > 85 ? 'HIGH LOAD — CPU ' + vitals.cpu + '%' :
+            vitals.battery < 15 ? 'POWER LOW — ' + vitals.battery + '%' :
+            n != null ? `FLEET ${n} ONLINE · NOMINAL` :
+            'ALL SYSTEMS NOMINAL';
+    }
+
     // Timestamp
     const vitalsTime = document.getElementById('vitals-time');
     if (vitalsTime && vitals.timestamp) {
         vitalsTime.textContent = vitals.timestamp;
     }
+};
+
+socket.on('system_vitals', (vitals) => {
+    window._vitalsSeen = true;          // socket is authoritative now
+    window.__emitVitals(vitals);
 });
+
+// First-paint fallback: seed the HUD from REST so the gauge arcs,
+// bars and big numerals are alive before the socket's first tick.
+fetch('/api/vitals').then(r => r.ok ? r.json() : null).then(v => {
+    if (v && !window._vitalsSeen) window.__emitVitals(v);
+}).catch(() => {});
 
 // Smart Home device status — build cards on demand, delegate clicks
 const DEVICE_LIST = [
@@ -1169,6 +1264,7 @@ function setCoreState(state) {
     const dial = core ? core.closest('.reactor') : null;
     if (!dial) return;
     dial.classList.remove('listening', 'speaking');
+    if (window._waveSpeak) window._waveSpeak(state === 'speaking' || state === 'processing');
     if (state === 'active') dial.classList.add('listening');
     else if (state === 'speaking' || state === 'processing') dial.classList.add('speaking');
 }
@@ -1231,6 +1327,7 @@ function addMessage(text) {
     }
     messageContainer.appendChild(row);
     messageContainer.scrollTop = messageContainer.scrollHeight;
+    if (window._updateHero) window._updateHero();
 }
 
 // --- LIBRARIAN MODE LOGIC ---
@@ -1359,6 +1456,38 @@ if (feedBtn) {
         }
     });
 }
+
+
+/* ── WAVEFORM + HERO VISIBILITY ─────────────────────────────────────── */
+(function () {
+    const bars = document.querySelectorAll('#wave i');
+    const n = bars.length;
+    let t0 = performance.now();
+    let speaking = false;
+    window._waveSpeak = (on) => { speaking = !!on; };
+
+    function frame(now) {
+        const dt = (now - t0) / 1000;
+        const amp = speaking ? 11 : 3.5;
+        bars.forEach((b, i) => {
+            const v = Math.abs(Math.sin(dt * 3.1 + i * 0.55)) *
+                      Math.abs(Math.sin(dt * 7.3 + i * 1.3));
+            b.style.height = (2 + v * amp + (speaking ? Math.random() * 2 : 0)).toFixed(1) + 'px';
+            b.style.opacity = speaking ? .9 : .4 + v * .3;
+        });
+        setTimeout(() => requestAnimationFrame(frame), 90);
+    }
+    if (bars.length) requestAnimationFrame(frame);
+
+    // hero visibility: hide once real conversation flows
+    window._updateHero = function () {
+        const feed = document.querySelector('.feed');
+        const hero = document.getElementById('hero');
+        if (!feed || !hero) return;
+        const real = feed.querySelectorAll('.msg:not(.intro)').length;
+        feed.classList.toggle('busy', real > 2);
+    };
+})();
 
 /* ====================================================================== *
  * OPS DECK runtime — toasts, ops-rail stacks, palette, ticker, widgets
@@ -1743,6 +1872,7 @@ if (feedBtn) {
         { code: 'SEC', label: 'privacy', act: () => openPanel('privacy-panel', 'privacy-btn') },
         { code: 'LIB', label: 'knowledge upload', act: () => openPanel('librarian-panel', 'librarian-btn') },
         { code: 'SKL', label: 'skills & tools', act: () => openPanel('capabilities-panel', 'skills-btn') },
+        { code: 'LLM', label: 'ai providers · byok', act: () => openPanel('llm-panel', 'llm-btn') },
         { code: 'VIS', label: 'vision scan', act: () => $('vision-btn') && $('vision-btn').click() },
         { code: 'DEV', label: 'dev focus', act: () => $('dev-btn') && $('dev-btn').click() },
         { code: 'MIS', label: 'missions stack', act: () => flashStack('stack-missions') },
@@ -1808,4 +1938,225 @@ if (feedBtn) {
             else openPalette();
         }
     });
+})();
+
+/* ====================================================================== *
+ *  LLM PROVIDERS + MCP — drawer data module.
+ *  Fleet status, BYOK key management, MCP server states + reload.
+ * ====================================================================== */
+(function () {
+    const panel = document.getElementById('llm-panel');
+    if (!panel) return;
+
+    const fleetEl = document.getElementById('llm-fleet');
+    const listEl = document.getElementById('llm-provider-list');
+
+    // MCP section lives right above the footer note.
+    const noteEl = panel.querySelector('.llm-note');
+    let mcpEl = document.getElementById('llm-mcp');
+    if (!mcpEl && noteEl) {
+        mcpEl = document.createElement('div');
+        mcpEl.id = 'llm-mcp';
+        noteEl.parentNode.insertBefore(mcpEl, noteEl);
+    }
+
+    const PROV_SRC = {
+        groq: 'console.groq.com', google: 'aistudio.google.com',
+        anthropic: 'console.anthropic.com', openai: 'platform.openai.com',
+        deepseek: 'platform.deepseek.com', openrouter: 'openrouter.ai',
+        custom: 'custom base_url',
+        ollama: 'local · no key', lmstudio: 'local · no key',
+    };
+
+    function chip(state) {
+        if (state === 'ok') return '<span class="st-ok">[ OK ]</span>';
+        if (state === 'cool') return '<span class="st-cool">[COOL]</span>';
+        return '<span class="st-off">[ -- ]</span>';
+    }
+
+    async function refreshLlm() {
+        try {
+            const res = await fetch('/api/providers');
+            if (!res.ok) return;
+            const d = await res.json();
+            renderFleet(d);
+            renderProviders(d);
+            renderMcp(d);
+        } catch (_) { /* offline */ }
+    }
+    window.refreshLlmFleet = refreshLlm;   // hook point for openPanel
+
+    // Publish live fleet size for the hero gauge status line.
+    async function publishFleetCount() {
+        try {
+            const res = await fetch('/api/providers');
+            if (!res.ok) return;
+            const d = await res.json();
+            window._fleetOnline = (d.providers || []).length;
+        } catch (_) { /* offline */ }
+    }
+    publishFleetCount();
+    setInterval(publishFleetCount, 60000);
+
+    function renderFleet(d) {
+        if (!fleetEl) return;
+        const names = (d.providers || []).map(p => p.name);
+        if (!names.length) {
+            fleetEl.innerHTML =
+                'FLEET OFFLINE · <a href="/onboarding" style="color:var(--accent)">run setup →</a>';
+            return;
+        }
+        fleetEl.innerHTML =
+            `FLEET <b>${names.length} ONLINE</b> · CHAIN ` +
+            `<b>${(d.order || []).join(' → ')}</b>`;
+    }
+
+    function renderProviders(d) {
+        if (!listEl) return;
+        const online = {};
+        (d.providers || []).forEach(p => { online[p.name] = p; });
+        const cool = new Set(Object.keys(d.cooldowns || {})
+            .map(k => k.split('/')[0]));
+        listEl.innerHTML = Object.keys(PROV_SRC).map(name => {
+            const prov = online[name];
+            const keyInfo = (d.keys || {})[name] || {};
+            const state = prov ? (cool.has(name) ? 'cool' : 'ok') : 'off';
+            const models = prov
+                ? `${(prov.models || []).length} model(s)` +
+                  (prov.dynamic ? ' · auto-detected' : '')
+                : `— ${PROV_SRC[name]}`;
+            const preview = keyInfo.preview
+                ? `<span class="prov-key">${keyInfo.preview}</span>` : '';
+            const del = keyInfo.configured
+                ? `<button class="prov-del" data-del="${name}">DEL</button>`
+                : '';
+            return `<div class="prov-row">
+                <span class="prov-name">${name}</span>
+                <span class="prov-status">${chip(state)}</span>
+                <span class="prov-models">${models}</span>
+                ${preview}${del}
+            </div>`;
+        }).join('');
+        // select options mirror the canonical set
+        const sel = document.getElementById('llm-provider-select');
+        if (sel && !sel.options.length) {
+            sel.innerHTML = ['groq', 'google', 'anthropic', 'openai',
+                'deepseek', 'openrouter', 'custom']
+                .map(p => `<option value="${p}">${p}</option>`).join('');
+        }
+    }
+
+    function renderMcp(d) {
+        if (!mcpEl) return;
+        const servers = d.mcp || [];
+        if (!servers.length) return;      // keep the drawer quiet
+        const rows = servers.map(s =>
+            `<div class="prov-row">
+                <span class="prov-name">mcp·${s.name}</span>
+                <span class="prov-status">${
+                    s.state === 'online'
+                        ? '<span class="st-ok">[ OK ]</span>'
+                        : s.state === 'offline'
+                        ? '<span class="prov-key" title="' +
+                          (s.error || '') + '">[FAIL]</span>'
+                        : '<span class="st-off">[PEND]</span>'
+                }</span>
+                <span class="prov-models">${s.tools != null
+                    ? s.tools + ' tool(s)' : (s.command || '')}</span>
+            </div>`).join('');
+        mcpEl.innerHTML =
+            `<div class="llm-fleet" style="border:none;padding:8px 0 0;">
+                MCP TOOL SERVERS
+                <button class="prov-del" id="mcp-reload" style="margin-left:auto;">RELOAD</button>
+             </div>${rows}`;
+        const btn = document.getElementById('mcp-reload');
+        if (btn) btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+                await fetch('/api/mcp/reload', { method: 'POST' });
+                await refreshLlm();
+            } catch (_) {}
+            btn.disabled = false;
+        });
+    }
+
+    // ---- actions -------------------------------------------------- //
+    const saveBtn = document.getElementById('llm-save-btn');
+    const keyInput = document.getElementById('llm-key-input');
+    const selectEl = document.getElementById('llm-provider-select');
+
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
+        const provider = selectEl ? selectEl.value : '';
+        const api_key = keyInput ? keyInput.value.trim() : '';
+        if (!provider || !api_key) {
+            showToast('Missing key', 'Pick a provider and paste a key.',
+                      'error', 2600);
+            return;
+        }
+        saveBtn.disabled = true;
+        try {
+            const res = await fetch('/api/providers', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({provider, api_key})
+            });
+            const d = await res.json();
+            if (d.ok) {
+                showToast('Provider saved',
+                          `${provider} joined the failover fleet.`,
+                          'success', 3000);
+                keyInput.value = '';
+                await refreshLlm();
+            } else {
+                showToast('Rejected', d.error || 'unknown error',
+                          'error', 3200);
+            }
+        } catch (_) {
+            showToast('Network error', 'Could not reach Jarvis.',
+                      'error', 3000);
+        } finally { saveBtn.disabled = false; }
+    });
+    if (keyInput) keyInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && saveBtn) saveBtn.click();
+    });
+    if (listEl) listEl.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-del]');
+        if (!btn) return;
+        btn.disabled = true;
+        try {
+            await fetch(`/api/providers/${btn.dataset.del}`,
+                        { method: 'DELETE' });
+            showToast('Key removed',
+                      `${btn.dataset.del} left the fleet.`,
+                      'success', 2800);
+            await refreshLlm();
+        } catch (_) {}
+    });
+
+    // ---- wiring --------------------------------------------------- //
+    const llmBtn = document.getElementById('llm-btn');
+    if (llmBtn) llmBtn.addEventListener('click', () => {
+        openPanel('llm-panel', 'llm-btn');
+        refreshLlm();
+    });
+    const closeBtn = document.getElementById('llm-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeAllPanels);
+
+    refreshLlm();
+})();
+
+// Onboarding nudge: first run with zero providers configured.
+(async function () {
+    try {
+        const res = await fetch('/health');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.needs_onboarding &&
+            !location.pathname.startsWith('/onboarding')) {
+            showToast('Setup required',
+                      'Jarvis has no AI keys yet. Opening setup…',
+                      'warn', 5000);
+            setTimeout(() => location.href = '/onboarding', 1600);
+        }
+    } catch (_) {}
 })();

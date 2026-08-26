@@ -126,6 +126,43 @@ Say **"Jarvis"** in the browser to wake him, or just type commands.
 | `utils/briefing.py` | Enhanced morning briefing V2 (context-aware, relationships, goals) |
 | `utils/privacy.py` | Privacy-first framework (trust controls, spending limits, audit log) |
 | `templates/`, `static/` | HUD-style web dashboard |
+| `utils/llm/` | **Provider-agnostic brain fleet** — router, 9 providers (Groq/Gemini/Claude/OpenAI/DeepSeek/OpenRouter/Ollama/LM Studio/custom), capability-aware failover, cooldowns, runtime keystore |
+| `utils/agent_loop.py` | **Native tool-calling agent core** — 29 curated tools + executor bridge, streamed answers, step budget (`JARVIS_AGENT_MODE=off` reverts to legacy routing) |
+| `utils/mcp_client.py` | **MCP client** — any Model-Context-Protocol server's tools join the fleet as `mcp__<server>__<tool>` |
+| `skills/`, `tools_registry/` | User-extensible skills (templated Python) + REST tool manifests — dropped-in JSON, hot-reloaded |
+
+## First-run setup
+
+Open **`/onboarding`** — pick a provider, paste a key, Jarvis goes live.
+Any ONE of Groq / Gemini / OpenAI / Anthropic / DeepSeek / OpenRouter /
+a local Ollama works; keys stack into an automatic failover chain and can
+be added anytime from the dashboard's **LLM** panel (or
+`config/providers.json`, chmod 600).
+
+## Agent mode
+
+With any tool-capable provider configured, requests run through the
+iterative agent loop: the model calls real tools (memory, todos,
+calendar, email, system control, skills, MCP servers) until the job is
+done, then streams the answer. Tuning:
+
+- `JARVIS_AGENT_MODEL=groq:openai/gpt-oss-120b` — pin the strongest
+  model for agent turns while chat stays on cheap defaults
+- `JARVIS_AGENT_MAX_STEPS=6` — tool-iteration budget per request
+- `JARVIS_AGENT_STREAM=0` — disable token streaming
+- `JARVIS_AGENT_MODE=off` — revert to single-shot legacy routing
+
+## MCP tool servers
+
+Copy `config/mcp_servers.example.json` → `mcp_servers.json`:
+
+```json
+[{"name": "files", "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}]
+```
+
+Restart or hit **RELOAD** in the LLM panel — those tools appear in the
+fleet with `[ OK ]` status and become callable by the agent.
 
 ## Configuration
 

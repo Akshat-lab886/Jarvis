@@ -1,0 +1,10 @@
+{
+  "name": "exchange_rate",
+  "description": "Latest foreign-exchange rates for a base currency (e.g. USD)",
+  "method": "GET",
+  "url": "https://open.er-api.com/v6/latest/{base}",
+  "params": {
+    "base": {"type": "string", "required": true, "description": "base currency code like USD, EUR, INR"}
+  },
+  "timeout": 10
+}

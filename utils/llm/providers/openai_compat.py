@@ -137,18 +137,42 @@ class OpenAICompatProvider(BaseProvider):
     # ---------------------------------------------------------------- #
 
     def _stream(self, completion, model, t0):
-        """Yield ChatResult chunks; text accumulates across chunks."""
+        """
+        Yield ChatResult chunks; text accumulates across chunks.
+        Tool-call argument fragments are merged incrementally and the
+        COMPLETE tool_calls list is attached to a terminal chunk (the
+        one carrying finish_reason), so consumers never see fragments.
+        """
         acc = []
 
         def _gen():
             finish = ''
+            # index → {"id","name","args"} accumulating fragments
+            pending = {}
+            flushed = False
             try:
                 for chunk in completion:
                     if not getattr(chunk, 'choices', None):
                         continue
-                    delta = chunk.choices[0].delta
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    fr = getattr(choice, 'finish_reason', None)
                     piece = getattr(delta, 'content', None) or ''
-                    fr = getattr(chunk.choices[0], 'finish_reason', None)
+
+                    # merge tool_call fragments by index
+                    for tc in (getattr(delta, 'tool_calls', None) or []):
+                        idx = getattr(tc, 'index', 0) or 0
+                        slot = pending.setdefault(
+                            idx, {"id": "", "name": "", "args": ""})
+                        fn = getattr(tc, 'function', None)
+                        if getattr(tc, 'id', None):
+                            slot["id"] = tc.id
+                        if fn:
+                            if getattr(fn, 'name', None):
+                                slot["name"] += fn.name
+                            if getattr(fn, 'arguments', None):
+                                slot["args"] += fn.arguments
+
                     if fr:
                         finish = fr
                     if piece:
@@ -157,6 +181,31 @@ class OpenAICompatProvider(BaseProvider):
                                          model=model,
                                          finish_reason=finish or '',
                                          elapsed_s=time.time() - t0)
+                    elif finish and pending and not flushed:
+                        # Terminal chunk: hand over complete tool calls.
+                        flushed = True
+                        tool_calls = [
+                            ToolCall(id=slot["id"],
+                                     name=slot["name"],
+                                     arguments=slot["args"] or '{}')
+                            for _, slot in sorted(pending.items())]
+                        yield ChatResult(text='', provider=self.name,
+                                         model=model, finish_reason=finish,
+                                         tool_calls=tool_calls,
+                                         elapsed_s=time.time() - t0)
+                # Some providers never send a terminal content chunk —
+                # flush accumulated tool calls once the iterator ends.
+                if pending and not flushed:
+                    flushed = True
+                    tool_calls = [
+                        ToolCall(id=slot["id"], name=slot["name"],
+                                 arguments=slot["args"] or '{}')
+                        for _, slot in sorted(pending.items())]
+                    yield ChatResult(text='', provider=self.name,
+                                     model=model,
+                                     finish_reason=finish or 'tool_calls',
+                                     tool_calls=tool_calls,
+                                     elapsed_s=time.time() - t0)
             except Exception as err:
                 raise classify_error(err) from err
             finally:

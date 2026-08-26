@@ -1,0 +1,11 @@
+{
+  "name": "wikipedia_summary",
+  "description": "Short summary of a Wikipedia article by title",
+  "method": "GET",
+  "url": "https://en.wikipedia.org/api/rest_v1/page/summary/{title}",
+  "params": {
+    "title": {"type": "string", "required": true, "description": "article title with underscores for spaces"}
+  },
+  "headers": {"User-Agent": "JarvisAssistant/1.0"},
+  "timeout": 10
+}

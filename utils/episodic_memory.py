@@ -166,8 +166,28 @@ class EpisodicMemory:
     }
     """
 
+    # Per-file instance registry: every EpisodicMemory for the same
+    # file shares ONE in-memory state.  Without this, brain/executor/
+    # agent-loop each held private lists and their _save() calls played
+    # last-writer-wins, silently deleting memories written by the other
+    # (lost-update — first exposed by the Phase 2 agent loop).
+    _instances = {}
+
+    def __new__(cls, filename='episodic_memory.json', use_vector=True,
+                vector_dir=None):
+        key = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            filename))
+        if key not in cls._instances:
+            inst = super().__new__(cls)
+            inst._initialized = False
+            cls._instances[key] = inst
+        return cls._instances[key]
+
     def __init__(self, filename='episodic_memory.json', use_vector=True,
                  vector_dir=None):
+        if getattr(self, '_initialized', False):
+            return                      # shared singleton already loaded
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.file_path = os.path.join(self.base_dir, filename)
         self._lock = threading.RLock()
@@ -180,6 +200,7 @@ class EpisodicMemory:
         self._vector_dir = vector_dir or os.path.join(self.base_dir,
                                                       'knowledge_vault')
         self._load()
+        self._initialized = True
 
     def _index(self):
         """Return the shared vector index for this store (or None)."""
