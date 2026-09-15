@@ -6,46 +6,61 @@
     <title>J.A.R.V.I.S. · OPS DECK</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=10">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=31">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <div class="panel-backdrop" id="panel-backdrop"></div>
-<div class="scanlines"></div>
-<div class="frame"><b></b><b></b><b></b><b></b></div>
+<div class="hud-frame" id="hud-frame"><span></span><span></span><span></span><span></span></div>
 
 <div class="container">
 
-    <!-- ═══ STATUS STRIP ═══ -->
-    <header class="strip">
-        <div class="strip-cell"><span class="dot"></span><span class="lbl">JARVIS</span><span id="strip-status" class="online">ONLINE</span></div>
-        <div class="strip-cell num" id="strip-clock">--:--:--</div>
-        <div class="strip-cell"><span class="lbl">UP</span><span class="num" id="strip-up">—</span></div>
-        <div class="strip-cell"><span class="lbl">BUD</span><span class="num" id="w-budget-text">$0.00/5.00</span></div>
-        <div class="strip-cell"><span class="lbl">GUARD</span><span id="w-guard">—</span></div>
-        <div class="strip-cell" id="status">SYSTEMS NOMINAL</div>
-        <div id="listening-indicator" style="display:none;"></div>
-        <div class="strip-cell spacer"></div>
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="brand-mark">J</span>
+            <span class="brand-name">Jarvis<small>OPS CONSOLE</small></span>
+        </div>
         <nav class="fnav" id="fnav">
+            <span class="fnav-label">Work</span>
             <button data-code="VIS" id="vision-btn" title="Vision">VIS</button>
             <button data-code="MTG" id="meeting-btn" title="Meeting">MTG</button>
             <button data-code="TSK" id="tasks-btn" title="Tasks">TSK</button>
             <button data-code="NTS" id="notes-btn" title="Notes">NTS</button>
-            <span class="sep"></span>
+            <span class="fnav-label">Know</span>
             <button data-code="LIB" id="librarian-btn" title="Knowledge">LIB</button>
             <button data-code="MEM" id="memory-btn" title="Memory">MEM</button>
             <button data-code="PPL" id="people-btn" title="People">PPL</button>
-            <span class="sep"></span>
+            <span class="fnav-label">Sys</span>
             <button data-code="DEV" id="dev-btn" title="Dev mode">DEV</button>
             <button data-code="SEC" id="privacy-btn" title="Privacy">SEC</button>
             <button data-code="LLM" id="llm-btn" title="AI providers">LLM</button>
             <button data-code="SKL" id="skills-btn" title="Skills">SKL</button>
-            <button data-code="PAL" id="palette-btn" title="Palette (⌘K)">⌘K</button>
+            <button data-code="PAR" id="parity-btn" title="Parity: Jarvis vs Hermes">PAR</button>
+            <button data-code="PAL" id="palette-btn" title="Palette (⌘K)">PAL</button>
         </nav>
+        <div class="side-foot">
+            <a href="/mobile" target="_blank" rel="noopener">Open phone UI ↗</a>
+        </div>
+    </aside>
+
+    <!-- ═══ TOPBAR ═══ -->
+    <header class="strip">
+        <div class="strip-cell brand-cell"><span class="dot" id="strip-dot"></span><span class="lbl jarvis-label">Jarvis</span><span id="strip-status" class="sync">SYNC</span></div>
+        <div class="strip-cell pill" id="status">Systems nominal</div>
+        <div class="strip-cell num hide-sm" id="strip-clock">--:--:--</div>
+        <div class="strip-cell hide-md"><span class="lbl">UP</span><span class="num" id="strip-up">—</span></div>
+        <div class="strip-cell strip-vitals"><span class="lbl">CPU</span><b id="strip-cpu">—</b><span class="lbl">MEM</span><b id="strip-mem">—</b><span class="lbl">DSK</span><b id="strip-dsk">—</b></div>
+        <div class="strip-cell hide-md"><span class="lbl">BUD</span><span class="num" id="w-budget-text">$0.00/5.00</span></div>
+        <div class="strip-cell hide-md"><span class="lbl">GUARD</span><span id="w-guard">—</span></div>
+        <div id="listening-indicator" style="display:none;"></div>
+        <div class="strip-cell spacer"></div>
+        <button class="top-search" onclick="document.getElementById('palette-btn').click()" title="Commands (⌘K)"><span>Search or command…</span><span class="kbd">⌘K</span></button>
     </header>
 
-    <!-- ═══ SYSTEM RAIL ═══ -->
+    <!-- ═══ SYSTEM RAIL (retained hidden for JS compat; strip shows vitals) ═══ -->
     <aside class="system" id="vitals-panel">
         <div class="rail-head"><span>SYSTEM</span><span class="num" id="vitals-time">--:--:--</span></div>
 
@@ -101,40 +116,53 @@
 
     <!-- ═══ TRANSCRIPT ═══ -->
     <main class="feed">
-        <div class="rail-head">
-            <span class="head-left"><span>TRANSCRIPT</span>
+        <div class="feed-head">
+            <span class="head-left"><span class="feed-title">Conversation</span>
               <span class="wave" id="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
             </span>
-            <span>⌘K COMMANDS</span>
+            <span class="feed-hint"><span class="live-dot"></span>Live · ⌘K commands</span>
           </div>
         <div class="hero" id="hero">
-            <div class="gauge">
-                <svg viewBox="0 0 190 190" width="190" height="190">
-                    <circle class="track" cx="95" cy="95" r="86"/>
-                    <circle class="track" cx="95" cy="95" r="72"/>
-                    <circle class="track" cx="95" cy="95" r="58"/>
-                    <circle class="arc arc-cpu" id="arc-cpu" cx="95" cy="95" r="86"/>
-                    <circle class="arc arc-ram" id="arc-ram" cx="95" cy="95" r="72"/>
-                    <circle class="arc arc-dsk" id="arc-dsk" cx="95" cy="95" r="58"/>
-                </svg>
-                <div class="gread"><b id="hero-cpu">0</b><span>CPU %</span></div>
-                <div class="gcore"></div>
+            <div class="hero-card">
+                <div class="hero-greet" id="hero-greet">Good evening, Sir</div>
+                <div class="gauge">
+                    <svg viewBox="0 0 190 190" width="190" height="190">
+                        <circle class="track" cx="95" cy="95" r="86"/>
+                        <circle class="track" cx="95" cy="95" r="72"/>
+                        <circle class="track" cx="95" cy="95" r="58"/>
+                        <circle class="arc arc-cpu" id="arc-cpu" cx="95" cy="95" r="86"/>
+                        <circle class="arc arc-ram" id="arc-ram" cx="95" cy="95" r="72"/>
+                        <circle class="arc arc-dsk" id="arc-dsk" cx="95" cy="95" r="58"/>
+                    </svg>
+                    <div class="gread"><b id="hero-cpu">0</b><span>SYSTEM LOAD</span></div>
+                    <div class="gcore"></div>
+                </div>
+                <div class="wordmark">Jarvis</div>
+                <div class="hstatus-pill"><span class="pulse"></span><span class="hstatus" id="hero-status">ALL SYSTEMS NOMINAL</span></div>
+                <div class="hero-chips">
+                    <button onclick="quickPrompt('summarize my day')">Summarize my day</button>
+                    <button onclick="quickPrompt('show my missions')">Show missions</button>
+                    <button onclick="quickPrompt('check system health')">Check systems</button>
+                </div>
             </div>
-            <div class="wordmark">J.A.R.<b>V</b>.I.S.</div>
-            <div class="hstatus" id="hero-status">ALL SYSTEMS NOMINAL</div>
         </div>
         <div id="message-container" class="feed-scroll">
-            <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">JARVIS OPS DECK — awaiting input, Sir. ⌘K for commands.</span></div>
+            <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">Welcome back, Sir. Ask me anything below, or press ⌘K for commands.</span></div>
         </div>
     </main>
 
-    <!-- ═══ OPERATIONS RAIL ═══ -->
+    <!-- ═══ INSPECTOR RAIL · ordered by attention: approvals first ═══ -->
     <aside class="ops" id="ops-rail">
+
+        <div class="ops-stack" id="stack-approvals">
+            <div class="ops-head"><span class="ops-title"><span class="ops-dot warn"></span>Approvals</span><span class="act" id="approvals-refresh">Sync</span></div>
+            <div class="ops-body" id="approvals-list"></div>
+        </div>
 
         <div class="ops-stack" id="stack-missions">
             <div class="ops-head">
-                <span>MISSIONS</span>
-                <span><span class="act" id="mis-tab-active">ACT</span> / <span class="act" id="mis-tab-hist">HIST</span></span>
+                <span class="ops-title"><span class="ops-dot"></span>Missions</span>
+                <span><span class="act" id="mis-tab-active">Active</span> <span class="act ghost" id="mis-tab-hist">History</span></span>
             </div>
             <div class="ops-body" id="missions-list"></div>
             <div class="ops-body" id="missions-history-wrap" style="display:none">
@@ -143,18 +171,32 @@
             </div>
         </div>
 
-        <div class="ops-stack" id="stack-approvals">
-            <div class="ops-head"><span>APPROVALS</span><span class="act" id="approvals-refresh">SYNC</span></div>
-            <div class="ops-body" id="approvals-list"></div>
+        <div class="ops-stack" id="stack-goals">
+            <div class="ops-head"><span class="ops-title"><span class="ops-dot ok"></span>Goals</span><span class="act" id="goals-refresh">Sync</span></div>
+            <div class="ops-body" id="goals-list"></div>
         </div>
 
         <div class="ops-stack" id="stack-automations">
-            <div class="ops-head"><span>AUTOMATIONS</span><span class="act" id="automations-refresh">SYNC</span></div>
+            <div class="ops-head"><span class="ops-title"><span class="ops-dot"></span>Automations</span><span class="act" id="automations-refresh">Sync</span></div>
             <div class="ops-body" id="automation-list"></div>
             <div class="aut-add">
-                <input type="text" id="automation-input" placeholder='every day at 9am …' autocomplete="off">
-                <button id="automation-add-btn">ADD</button>
+                <input type="text" id="automation-input" placeholder="Every day at 9am…" autocomplete="off">
+                <button id="automation-add-btn">Add</button>
             </div>
+        </div>
+
+        <div class="ops-stack" id="stack-mobile">
+            <div class="ops-head"><span class="ops-title"><span class="ops-dot ok"></span>Mobile Link</span><span class="act" id="mobile-pair-btn">Pair</span></div>
+            <div class="ops-body" id="mobile-list"><div class="no-data">No paired phones yet</div></div>
+            <div class="mob-code" id="mobile-code" style="display:none"></div>
+            <div class="mob-qr" id="mobile-qr" style="display:none"></div>
+            <div class="mob-link" id="mobile-link" style="display:none"></div>
+            <div class="mob-open"><a href="/mobile" target="_blank" rel="noopener">Open phone UI ↗</a></div>
+        </div>
+
+        <div class="ops-stack" id="stack-caps">
+            <div class="ops-head"><span class="ops-title"><span class="ops-dot"></span>Capabilities</span><span class="act" id="caps-refresh">Sync</span></div>
+            <div class="ops-body" id="caps-list"></div>
         </div>
 
     </aside>
@@ -162,13 +204,14 @@
     <!-- ═══ COMMAND + TICKER ═══ -->
     <div class="cmdzone">
         <div class="cmd" id="cmd-wrap">
-            <span class="prompt">&gt;</span>
-            <input type="text" id="chat-input" placeholder="type a command" autocomplete="off">
-            <span class="cursor" id="cmd-cursor">▮</span>
-            <button id="send-btn">SEND</button>
+            <span class="prompt">›</span>
+            <input type="text" id="chat-input" placeholder="Ask Jarvis anything…" autocomplete="off">
+            <span class="cursor" id="cmd-cursor">▍</span>
+            <button id="mic-btn" class="mic" title="Listen for a command (browser voice)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg><span>Talk</span></button>
+            <button id="send-btn" title="Send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
         </div>
         <div class="ticker">
-            <span class="tl">LOG</span>
+            <span class="tick-dot"></span><span class="tl">LOG</span>
             <span class="tline num" id="ticker-line">booting…</span>
         </div>
     </div>
@@ -177,24 +220,24 @@
 
     <!-- Tasks -->
     <div class="drawer" id="tasks-panel">
-        <div class="d-head"><i class="tag">TSK</i><span>TO-DO LIST</span><button class="d-close" id="tasks-close">[X]</button></div>
+        <div class="d-head"><i class="tag">TSK</i><span>TO-DO LIST</span><button class="d-close" id="tasks-close">✕</button></div>
         <div class="d-body">
             <div class="d-input-row">
-                <input type="text" id="task-input" placeholder="add a task" autocomplete="off">
-                <button class="d-btn primary" id="task-add-btn">ADD</button>
+                <input type="text" id="task-input" placeholder="Add a task…" autocomplete="off">
+                <button class="d-btn primary" id="task-add-btn">Add</button>
             </div>
             <div id="task-list"></div>
-            <button class="d-btn wide" id="task-clear-btn">CLEAR ALL</button>
+            <button class="d-btn wide" id="task-clear-btn">Clear all</button>
         </div>
     </div>
 
     <!-- Notes -->
     <div class="drawer" id="notes-panel">
-        <div class="d-head"><i class="tag">NTS</i><span>NOTES</span><button class="d-close" id="notes-close">[X]</button></div>
+        <div class="d-head"><i class="tag">NTS</i><span>NOTES</span><button class="d-close" id="notes-close">✕</button></div>
         <div class="d-body">
             <div class="d-input-row">
-                <input type="text" id="note-input" placeholder="write a note" autocomplete="off">
-                <button class="d-btn primary" id="note-add-btn">ADD</button>
+                <input type="text" id="note-input" placeholder="Write a note…" autocomplete="off">
+                <button class="d-btn primary" id="note-add-btn">Add</button>
             </div>
             <div id="note-list"></div>
         </div>
@@ -202,22 +245,26 @@
 
     <!-- Memory -->
     <div class="drawer" id="memory-panel">
-        <div class="d-head"><i class="tag">MEM</i><span>EPISODIC MEMORY</span><button class="d-close" id="memory-close">[X]</button></div>
+        <div class="d-head"><i class="tag">MEM</i><span>EPISODIC MEMORY</span><button class="d-close" id="memory-close">✕</button></div>
         <div class="d-body">
             <div class="d-input-row">
-                <input type="text" id="memory-input" placeholder="remember something" autocomplete="off">
+                <input type="text" id="memory-input" placeholder="Remember something…" autocomplete="off">
                 <select id="memory-category">
                     <option value="fact">fact</option><option value="preference">pref</option>
                     <option value="health">health</option><option value="goal">goal</option>
                     <option value="context">ctx</option><option value="routine">routine</option>
                 </select>
-                <button class="d-btn primary" id="memory-add-btn">ADD</button>
+                <button class="d-btn primary" id="memory-add-btn">Add</button>
             </div>
             <div id="memory-list"></div>
             <div id="memory-stats" class="no-data"></div>
+            <div class="rlm-block">
+                <div class="d-subhead"><i class="tag">RLM</i><span>RECURSIVE MEMORY</span><button class="act" id="rlm-refresh-btn">REFRESH</button></div>
+                <div id="rlm-snapshot" class="no-data">hierarchy loads when the drawer opens</div>
+            </div>
             <div class="d-input-row" style="margin-top:14px;">
-                <input type="text" id="transcript-search-input" placeholder="search past conversations" autocomplete="off">
-                <button class="d-btn" id="transcript-search-btn">FIND</button>
+                <input type="text" id="transcript-search-input" placeholder="Search past conversations…" autocomplete="off">
+                <button class="d-btn" id="transcript-search-btn">Find</button>
             </div>
             <div id="transcript-results"></div>
         </div>
@@ -225,12 +272,12 @@
 
     <!-- People -->
     <div class="drawer" id="people-panel">
-        <div class="d-head"><i class="tag">PPL</i><span>RELATIONSHIPS</span><button class="d-close" id="people-close">[X]</button></div>
+        <div class="d-head"><i class="tag">PPL</i><span>RELATIONSHIPS</span><button class="d-close" id="people-close">✕</button></div>
         <div class="d-body">
             <div class="d-input-row">
-                <input type="text" id="person-name-input" placeholder="name" autocomplete="off">
-                <input type="text" id="person-rel-input" placeholder="relationship" autocomplete="off" style="width:110px;">
-                <button class="d-btn primary" id="person-add-btn">ADD</button>
+                <input type="text" id="person-name-input" placeholder="Name" autocomplete="off">
+                <input type="text" id="person-rel-input" placeholder="Relationship" autocomplete="off" style="width:110px;">
+                <button class="d-btn primary" id="person-add-btn">Add</button>
             </div>
             <div id="people-list"></div>
         </div>
@@ -238,51 +285,83 @@
 
     <!-- Meeting -->
     <div class="drawer" id="meeting-panel">
-        <div class="d-head"><i class="tag">MTG</i><span>MEETING MODE</span><button class="d-close" id="meeting-close">[X]</button></div>
+        <div class="d-head"><i class="tag">MTG</i><span>MEETING MODE</span><button class="d-close" id="meeting-close">✕</button></div>
         <div class="d-body">
-            <div class="meet-status" id="meeting-status">ready to record</div>
-            <button class="d-btn wide" id="meeting-start-btn">● START RECORDING</button>
-            <button class="d-btn wide" id="meeting-stop-btn">■ STOP &amp; PROCESS</button>
-            <div class="meet-transcript" id="meeting-transcript"></div>
+            <div class="meet-status" id="meeting-status">READY TO RECORD</div>
+            <button class="d-btn wide" id="meeting-start-btn">● Start recording</button>
+            <button class="d-btn wide" id="meeting-stop-btn" style="display:none;">■ Stop &amp; process</button>
+            <div class="meet-transcript" id="meeting-transcript"><span class="task-empty">Live transcript appears here while recording</span></div>
         </div>
     </div>
 
     <!-- Privacy -->
     <div class="drawer" id="privacy-panel">
-        <div class="d-head"><i class="tag">SEC</i><span>PRIVACY &amp; TRUST</span><button class="d-close" id="privacy-close">[X]</button></div>
+        <div class="d-head"><i class="tag">SEC</i><span>PRIVACY &amp; TRUST</span><button class="d-close" id="privacy-close">✕</button></div>
         <div class="d-body"><div id="privacy-settings"></div></div>
     </div>
 
     <!-- Capabilities -->
     <div class="drawer" id="capabilities-panel">
-        <div class="d-head"><i class="tag">SKL</i><span>CAPABILITIES</span><button class="d-close" id="capabilities-close">[X]</button></div>
+        <div class="d-head"><i class="tag">SKL</i><span>CAPABILITIES</span><button class="d-close" id="capabilities-close">✕</button></div>
         <div class="d-body">
             <div class="tabs">
-                <button class="tab active" data-cab-tab="skills">SKILLS</button>
-                <button class="tab" data-cab-tab="tools">TOOLS</button>
+                <button class="tab active" data-cab-tab="skills">Skills</button>
+                <button class="tab" data-cab-tab="tools">Tools</button>
             </div>
             <div id="cab-skills-tab"><div id="skills-list"></div></div>
             <div id="cab-tools-tab" class="hidden"><div id="tools-list"></div></div>
         </div>
     </div>
 
+    <!-- Agent Loop Inspector (DEV) -->
+    <div class="drawer" id="agent-panel">
+        <div class="d-head"><i class="tag">DEV</i><span>AGENT INSPECTOR</span><button class="d-close" id="agent-close">✕</button></div>
+        <div class="d-body">
+            <div class="d-subhead first"><i class="tag">MODE</i><span>RUN / STOP / LIMITS</span></div>
+            <div class="setting-row">
+                <label>Mode</label>
+                <span><button class="tbtn" data-agent-mode="auto">AUTO</button><button class="tbtn" data-agent-mode="on">ON</button><button class="tbtn" data-agent-mode="off">OFF</button></span>
+            </div>
+            <div class="setting-row">
+                <label>Steps</label>
+                <span>
+                    <input type="number" id="agent-max-steps" min="1" max="50" value="8" style="width:70px;">
+                    <button class="tbtn" id="agent-set-steps">SET</button>
+                </span>
+            </div>
+            <div class="setting-row">
+                <label>Stream</label>
+                <button class="tbtn" data-agent-stream="1">ON</button><button class="tbtn" data-agent-stream="0">OFF</button>
+            </div>
+            <div class="setting-row">
+                <label>Model</label>
+                <input type="text" id="agent-model" placeholder="claude-sonnet-4-5" style="width:160px;">
+                <button class="tbtn" id="agent-set-model">SET</button>
+            </div>
+            <div class="d-subhead"><i class="tag">RUN</i><span>LIVE TOOL FEED</span><button class="act" id="agent-stop-btn">[STOP]</button></div>
+            <div id="agent-tool-feed" class="no-data">Idle — run a command to stream tool calls here</div>
+            <div class="d-subhead"><i class="tag">LOG</i><span>STATUS LINE</span></div>
+            <div id="agent-status-log" class="no-data">ready</div>
+        </div>
+    </div>
+
     <!-- Librarian -->
     <div class="drawer" id="librarian-panel">
-        <div class="d-head"><i class="tag">LIB</i><span>KNOWLEDGE UPLOAD</span><button class="d-close" id="librarian-close">[X]</button></div>
+        <div class="d-head"><i class="tag">LIB</i><span>KNOWLEDGE UPLOAD</span><button class="d-close" id="librarian-close">✕</button></div>
         <div class="d-body">
             <div class="upload-area" id="drop-zone">
-                <p>DRAG &amp; DROP · OR CLICK · pdf/txt/md</p>
+                <p>Drag &amp; drop, or click · pdf / txt / md</p>
                 <input type="file" id="knowledge-upload" accept=".pdf,.txt,.md" style="display:none;">
             </div>
             <div id="file-list"></div>
-            <button class="d-btn wide" id="feed-btn" disabled>FEED JARVIS (30m memory)</button>
-            <button class="d-btn wide" id="study-btn">STUDY PERMANENTLY</button>
+            <button class="d-btn wide" id="feed-btn" disabled>Feed Jarvis (30 min memory)</button>
+            <button class="d-btn wide" id="study-btn">Study permanently</button>
         </div>
     </div>
 
     <!-- AI Providers (BYOK) -->
     <div class="drawer" id="llm-panel">
-        <div class="d-head"><i class="tag">LLM</i><span>AI PROVIDERS · BYOK</span><button class="d-close" id="llm-close">[X]</button></div>
+        <div class="d-head"><i class="tag">LLM</i><span>AI PROVIDERS · BYOK</span><button class="d-close" id="llm-close">✕</button></div>
         <div class="d-body">
             <div id="llm-fleet" class="llm-fleet">SYNCING FLEET…</div>
             <div class="d-input-row">
@@ -295,18 +374,28 @@
                     <option value="openrouter">openrouter</option>
                     <option value="custom">custom</option>
                 </select>
-                <input type="password" id="llm-key-input" placeholder="paste api key" autocomplete="off">
-                <button class="d-btn primary" id="llm-save-btn">SAVE</button>
+                <input type="password" id="llm-key-input" placeholder="Paste API key…" autocomplete="off">
+                <button class="d-btn primary" id="llm-save-btn">Save</button>
             </div>
             <div id="llm-provider-list"></div>
-            <div class="llm-note">keys persist in config/providers.json · never logged · failover automatic</div>
+            <div class="llm-note">Keys persist in config/providers.json · never logged · failover automatic</div>
+        </div>
+    </div>
+
+    <!-- Parity (Jarvis ↔ Hermes) -->
+    <div class="drawer" id="parity-panel">
+        <div class="d-head"><i class="tag">PAR</i><span>PARITY · JARVIS vs HERMES</span><button class="d-close" id="parity-close">✕</button></div>
+        <div class="d-body">
+            <div class="d-subhead"><i class="tag">STAT</i><span>26-FEATURE GAP TO HERMES</span></div>
+            <div id="parity-summary" class="no-data">loading parity…</div>
+            <div id="parity-grid"></div>
         </div>
     </div>
 
     <!-- Command palette -->
     <div class="palette-backdrop" id="palette-backdrop">
         <div class="palette">
-            <input type="text" id="palette-input" placeholder="type a function code or name…" autocomplete="off">
+            <input type="text" id="palette-input" placeholder="Type a command or search…" autocomplete="off">
             <ul id="palette-list"></ul>
         </div>
     </div>
@@ -319,8 +408,8 @@
         <div class="rt-h">REMINDER</div>
         <div class="rt-t" id="reminder-toast-text"></div>
         <div class="rt-a">
-            <button id="reminder-snooze-btn">SNOOZE 10M</button>
-            <button id="reminder-dismiss-btn">DISMISS</button>
+            <button id="reminder-snooze-btn">Snooze 10 min</button>
+            <button id="reminder-dismiss-btn">Dismiss</button>
         </div>
     </div>
 
@@ -332,12 +421,24 @@
         <div id="device-grid"></div>
     </div>
 
-    <div id="terminal-box" class="terminal-box"></div>
-    <div class="mobile-mic-btn" id="mobile-mic-btn"></div>
+    <div id="terminal-box" class="terminal-box">
+        <div class="term-head"><span class="tl-accent">AGENT LOG</span><button id="terminal-close" title="Dismiss (logs pause until your next command)">✕</button></div>
+        <div class="term-body"></div>
+    </div>
+    <div class="mobile-mic-btn" id="mobile-mic-btn" title="Listen for a command (browser voice)" aria-label="Voice command">Talk</div>
 </div>
 
 <audio id="audio-player" style="display:none;"></audio>
 
-<script src="{{ url_for('static', filename='script.js') }}?v=10"></script>
+<script>
+// Time-aware greeting (display only — no logic changes).
+try {
+    var h = new Date().getHours();
+    var g = h < 5 ? 'Up late, Sir' : h < 12 ? 'Good morning, Sir' : h < 18 ? 'Good afternoon, Sir' : 'Good evening, Sir';
+    var el = document.getElementById('hero-greet');
+    if (el) el.textContent = g;
+} catch (e) {}
+</script>
+<script src="{{ url_for('static', filename='script.js') }}?v=31"></script>
 </body>
 </html>

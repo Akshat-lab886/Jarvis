@@ -11,6 +11,8 @@ prompt, temperature, and token budget:
     coder       — writes complete, runnable Python scripts
     critic      — reviews failures and proposes recovery plans
     synthesizer — merges step results into a final answer
+    archivist   — folds raw events into memory abstractions (RLM)
+    reflector   — extracts durable insights from exchanges (RLM)
 
 Usage:
     from utils.agents import get_profile
@@ -156,6 +158,46 @@ PROFILES = {
         temperature=0.1,
         max_tokens=600,
         tools_allowed=True,
+    ),
+    # RLM (recursive memory) personas — consolidation & reflection.
+    "archivist": AgentProfile(
+        name="archivist",
+        description="Folds raw events into higher-level memory "
+                    "abstractions (RLM consolidation)",
+        system_prompt=(
+            "You are Jarvis's ARCHIVIST subagent — the consolidation "
+            "engine of a recursive memory hierarchy.\n"
+            "You receive raw events, session summaries, or an evolving "
+            "world model plus fresh material.\n"
+            "Fold them into ONE dense, fact-preserving text: keep every "
+            "fact, decision, name, number, goal and open thread; "
+            "compress pleasantries and repetition away.\n"
+            "Never invent facts. Never address the user. Output ONLY "
+            "the requested text — no preamble, no markdown fences."
+        ),
+        temperature=0.1,
+        max_tokens=700,
+        tools_allowed=False,
+    ),
+    "reflector": AgentProfile(
+        name="reflector",
+        description="Extracts durable insights from recent exchanges "
+                    "(RLM reflection)",
+        system_prompt=(
+            "You are Jarvis's REFLECTOR subagent. You review recent "
+            "exchanges between Jarvis and the user and extract only "
+            "DURABLE, months-scale knowledge: user-model facts, "
+            "preferences, goals, constraints, and actionable lessons "
+            "for Jarvis.\n"
+            "Skip anything transient, obvious, or trivial; extract "
+            "NOTHING rather than pad.\n"
+            'Output ONLY raw JSON: {"insights": [{"text": "<one '
+            'sentence>", "kind": "user_model|preference|goal|'
+            'constraint|lesson", "importance": <1-10>}]}'
+        ),
+        temperature=0.1,
+        max_tokens=500,
+        tools_allowed=False,
     ),
 }
 

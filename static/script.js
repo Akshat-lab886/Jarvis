@@ -1,4 +1,9 @@
-const socket = io();
+// Socket.IO is CDN-loaded; if it fails (offline/blocked CDN) fall back to
+// a no-op stub so the rest of the deck (clock, REST vitals, rail renders)
+// still paints instead of dying on `io is not defined` → black screen.
+const socket = (window.io ? io() : {
+    on() {}, emit() {}, connected: false,
+});
 
 // DOM Elements
 const core = document.getElementById('core');
@@ -11,22 +16,38 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const panelBackdrop = document.getElementById('panel-backdrop');
 
-// --- THEME SWITCHER ---
+// --- THEME: single polished ops-console theme (switcher retired) ---
+// The #theme-switcher node stays in the DOM for compat but is hidden by
+// CSS. This no-op keeps the old `jarvis-theme` localStorage read harmless
+// so returning clients never error, without swapping body classes.
 const themeSwitcher = document.getElementById('theme-switcher');
 const themeDots = themeSwitcher ? themeSwitcher.querySelectorAll('.theme-dot') : [];
 
 function applyTheme(theme) {
-    document.body.className = theme === 'midnight' ? '' : 'theme-' + theme;
-    themeDots.forEach(d => d.classList.toggle('active', d.dataset.theme === theme));
-    localStorage.setItem('jarvis-theme', theme);
+    try {
+        document.body.classList.remove(
+            'theme-midnight', 'theme-command', 'theme-brutalist',
+            'theme-zen', 'theme-vault');
+        document.body.removeAttribute('class');
+    } catch (e) { /* non-fatal: theme is cosmetic */ }
+    try {
+        if (theme) localStorage.setItem('jarvis-theme', 'midnight');
+    } catch (e) { /* private-mode storage may throw */ }
+    if (themeDots && themeDots.forEach) {
+        themeDots.forEach(d => d.classList.toggle('active',
+            d.dataset && d.dataset.theme === 'midnight'));
+    }
 }
 
-themeDots.forEach(dot => {
-    dot.addEventListener('click', () => applyTheme(dot.dataset.theme));
-});
+if (themeDots && themeDots.forEach) {
+    themeDots.forEach(dot => {
+        dot.addEventListener('click', () => applyTheme('midnight'));
+    });
+}
 
-// Restore saved theme on load
-applyTheme(localStorage.getItem('jarvis-theme') || 'midnight');
+// Restore saved theme on load (always resolves to the single theme)
+try { applyTheme(localStorage.getItem('jarvis-theme') || 'midnight'); }
+catch (e) { applyTheme('midnight'); }
 
 // Instant HUD Clock — strip + rail
 function updateHUDClock() {
@@ -45,11 +66,12 @@ updateHUDClock();
 const allPanels = [
     'memory-panel', 'people-panel', 'meeting-panel', 'privacy-panel',
     'notes-panel', 'tasks-panel', 'librarian-panel', 'capabilities-panel',
-    'llm-panel'
+    'llm-panel', 'parity-panel', 'agent-panel'
 ];
 const allTriggers = [
     'memory-btn', 'people-btn', 'meeting-btn', 'privacy-btn',
-    'notes-btn', 'tasks-btn', 'librarian-btn', 'skills-btn', 'llm-btn'
+    'notes-btn', 'tasks-btn', 'librarian-btn', 'skills-btn', 'llm-btn',
+    'parity-btn', 'dev-btn'
 ];
 let activePanelId = null;
 
@@ -98,14 +120,30 @@ const WAKE_ALIASES = ["jarvis", "service", "travis", "jervis", "javis", "harvest
 
 // --- SOCKET IO HANDLERS ---
 
+// Connection truth drives the strip status + dot too, not just the center
+// #status line — the header can never claim ONLINE while disconnected.
+function setConnState(online) {
+    const s = document.getElementById('strip-status');
+    const d = document.getElementById('strip-dot');
+    if (s) {
+        s.textContent = online ? 'ONLINE' : 'OFFLINE';
+        s.classList.toggle('online', online);
+        s.classList.toggle('offline', !online);
+    }
+    if (d) d.classList.toggle('off', !online);
+}
+
 // Connection status
 socket.on('connect', () => {
-    console.log('✅ Connected to Jarvis server');
+    console.log('Connected to Jarvis server');
+    setConnState(true);
+    updateStatus('SYSTEMS NOMINAL');
     addMessage("SYSTEM: Connected to Jarvis");
 });
 
 socket.on('disconnect', () => {
-    console.log('❌ Disconnected from Jarvis server');
+    console.log('Disconnected from Jarvis server');
+    setConnState(false);
     addMessage("SYSTEM: Connection lost");
     updateStatus("DISCONNECTED", "offline");
 });
@@ -178,20 +216,49 @@ socket.on('ai_text_stream_end', () => {
     finalizeStream();
 });
 
-// Live Terminal Logging
+// Live Agent Log — a contained overlay: capped rows, auto-hide after a
+// quiet beat, and an explicit dismiss. Rows live in .term-body so the
+// header + close control never scroll away.
+const TERMINAL_MAX_ROWS = 120;
+let terminalMuted = false;
+let terminalHideTimer = null;
+
+function terminalAutoHide() {
+    if (terminalHideTimer) clearTimeout(terminalHideTimer);
+    terminalHideTimer = setTimeout(() => {
+        const t = document.getElementById('terminal-box');
+        if (t) t.style.display = 'none';
+    }, 6000);
+}
+
+function dismissTerminal() {
+    terminalMuted = true;             // suppress auto-show until a new command
+    const t = document.getElementById('terminal-box');
+    if (t) t.style.display = 'none';
+}
+
 socket.on('new_log', (data) => {
     const terminal = document.getElementById('terminal-box');
-    if (terminal) {
-        terminal.style.display = 'block'; // Auto-show on log
-        const line = document.createElement('div');
-        const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-        line.innerHTML = `<span style="opacity:0.5">[${time}]</span> ${data.data}`;
-        line.style.borderBottom = '1px dashed rgba(0, 255, 0, 0.2)';
-        line.style.padding = '4px 0';
-        terminal.appendChild(line);
-        terminal.scrollTop = terminal.scrollHeight;
+    if (!terminal) return;
+    if (!terminalMuted) terminal.style.display = 'block';
+    const body = terminal.querySelector('.term-body') || terminal;
+    const line = document.createElement('div');
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const span = document.createElement('span');
+    span.style.opacity = '.5';
+    span.textContent = `[${time}] `;
+    line.appendChild(span);
+    line.appendChild(document.createTextNode(data.data));
+    body.appendChild(line);
+    while (body.children.length > TERMINAL_MAX_ROWS) {
+        body.removeChild(body.firstElementChild);
     }
+    body.scrollTop = body.scrollHeight;
+    terminalAutoHide();
 });
+
+const terminalCloseBtn = document.getElementById('terminal-close');
+if (terminalCloseBtn) terminalCloseBtn.addEventListener('click', dismissTerminal);
 
 // Audio response (TTS)
 socket.on('audio', (data) => {
@@ -283,6 +350,14 @@ window.__emitVitals = function (vitals) {
         diskBar.style.width = vitals.disk + '%';
         diskValue.textContent = vitals.disk + '%';
     }
+
+    // Strip compact vitals (visible; rail stays hidden for compat)
+    const sc = document.getElementById('strip-cpu');
+    if (sc && vitals.cpu != null) sc.textContent = vitals.cpu + '%';
+    const sm = document.getElementById('strip-mem');
+    if (sm && vitals.ram != null) sm.textContent = vitals.ram + '%';
+    const sd = document.getElementById('strip-dsk');
+    if (sd && vitals.disk != null) sd.textContent = vitals.disk + '%';
 
     // Hero gauge arcs (R: 86/72/58)
     _setArc('arc-cpu', vitals.cpu);
@@ -569,23 +644,125 @@ visionBtn.addEventListener('click', () => {
 const devBtn = document.getElementById('dev-btn');
 if (devBtn) {
     devBtn.addEventListener('click', () => {
-        const project = prompt("Enter project name to focus on (leave empty to clear):");
-        if (project !== null) { // User didn't cancel
-            const cmd = project.trim() ? "Focus on " + project : "Exit dev mode";
-            wakeUp();
-            processCommand(cmd);
-        }
+        // DEV opens the agent-loop inspector instead of a window.prompt.
+        openPanel('agent-panel', 'dev-btn');
+        loadAgentConfig();
     });
 }
+
+// --- AGENT LOOP INSPECTOR (DEV drawer) ---
+const agentClose = document.getElementById('agent-close');
+if (agentClose) agentClose.addEventListener('click', closeAllPanels);
+
+async function loadAgentConfig() {
+    try {
+        const res = await fetch('/api/agent');
+        if (!res.ok) return;
+        const d = await res.json();
+        const ms = document.getElementById('agent-max-steps');
+        if (ms && d.max_steps != null) ms.value = d.max_steps;
+        const m = document.getElementById('agent-model');
+        if (m && d.model) m.value = d.model;
+        const feed = document.getElementById('agent-tool-feed');
+        if (feed) {
+            feed.innerHTML = d.running
+                ? '<div class="no-data">run in progress — stop to queue changes</div>'
+                : '<div class="no-data">idle — run a command to stream tool calls here</div>';
+        }
+    } catch (_) {}
+}
+
+function pushAgentStep(data) {
+    const feed = document.getElementById('agent-tool-feed');
+    if (!feed) return;
+    const row = document.createElement('div');
+    row.className = 'drow';
+    const status = (data.status || 'step').toUpperCase().padEnd(4);
+    const color = data.status === 'call' ? 'var(--accent)'
+        : data.status === 'fail' ? 'var(--fail)'
+        : data.status === 'ok' ? 'var(--ok)'
+        : 'var(--text-3)';
+    row.innerHTML = `<span class="mem-cat" style="color:${color}">[${status} #${data.step}]</span>` +
+        `<span class="grow">${escapeHtml(data.name || '')}${data.args ? ' ' + escapeHtml(String(data.args).slice(0, 90)) : ''}</span>`;
+    feed.appendChild(row);
+    feed.scrollTop = feed.scrollHeight;
+    // keep feed capped so the inspector never grows unbounded
+    while (feed.children.length > 120) feed.removeChild(feed.firstElementChild);
+}
+
+function pushAgentStatus(msg) {
+    const log = document.getElementById('agent-status-log');
+    if (!log) return;
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const line = document.createElement('div');
+    line.className = 'drow';
+    line.innerHTML = `<span class="mem-cat">${ts}</span><span class="grow">${escapeHtml(String(msg || ''))}</span>`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+    while (log.children.length > 80) log.removeChild(log.firstElementChild);
+}
+
+function agentSet(prop, value, viaInput) {
+    const body = {};
+    body[prop] = value;
+    fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    }).then(() => loadAgentConfig());
+}
+
+const agentModeBtns = document.querySelectorAll('[data-agent-mode]');
+agentModeBtns.forEach(b => b.addEventListener('click', () => {
+    agentSet('mode', b.dataset.agentMode);
+}));
+const agentStreamBtns = document.querySelectorAll('[data-agent-stream]');
+agentStreamBtns.forEach(b => b.addEventListener('click', () => {
+    agentSet('stream', b.dataset.agentStream);
+}));
+const agentSetStepsBtn = document.getElementById('agent-set-steps');
+if (agentSetStepsBtn) agentSetStepsBtn.addEventListener('click', () => {
+    const ms = document.getElementById('agent-max-steps');
+    agentSet('max_steps', parseInt(ms.value, 10) || 8);
+});
+const agentSetModelBtn = document.getElementById('agent-set-model');
+if (agentSetModelBtn) agentSetModelBtn.addEventListener('click', () => {
+    const m = document.getElementById('agent-model');
+    agentSet('model', m.value.trim());
+});
+const agentStopBtn = document.getElementById('agent-stop-btn');
+if (agentStopBtn) agentStopBtn.addEventListener('click', () => {
+    socket.emit('agent_stop', {});
+    pushAgentStatus('STOP requested');
+});
+
+socket.on('agent_step', (data) => pushAgentStep(data));
+socket.on('agent_status', (data) => pushAgentStatus(data.message));
 
 // --- SKILLS DRAWER DATA ---
 const skillsBtnEl = document.getElementById('skills-btn');
 if (skillsBtnEl) {
     skillsBtnEl.addEventListener('click', () => {
+        // SKL is a nav code like every other — it must open the panel,
+        // not just fire list events into a drawer the user can't reach.
+        openPanel('capabilities-panel', 'skills-btn');
         socket.emit('skills_action', { action: 'list' });
         socket.emit('tools_action', { action: 'list' });
     });
 }
+
+const parityBtn = document.getElementById('parity-btn');
+if (parityBtn) {
+    parityBtn.addEventListener('click', () => {
+        openPanel('parity-panel', 'parity-btn');
+        loadParity();
+    });
+}
+const parityClose = document.getElementById('parity-close');
+if (parityClose) parityClose.addEventListener('click', closeAllPanels);
+
+const capabilitiesClose = document.getElementById('capabilities-close');
+if (capabilitiesClose) capabilitiesClose.addEventListener('click', closeAllPanels);
 
 // --- CMD CURSOR ---
 const cmdWrap = document.getElementById('cmd-wrap');
@@ -599,6 +776,7 @@ if (chatInput && cmdWrap) {
 function sendText(text) {
     text = text || chatInput.value.trim();
     if (text) {
+        terminalMuted = false;   // a fresh command unmutes the agent log
         wakeUp();
         processCommand(text);
         chatInput.value = '';
@@ -654,6 +832,100 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+// --- RLM HIERARCHY SNAPSHOT (memory drawer) ---
+// Reads GET /api/rlm — a live dashboard_snapshot the deck never consumed —
+// so the recursive-memory hierarchy is visible, not just episodic counts.
+const RLM_LEVEL_NAMES = { 0: 'EV', 1: 'SUM', 2: 'ABS', 3: 'WM' };
+
+async function refreshRlm() {
+    const el = document.getElementById('rlm-snapshot');
+    if (!el) return;
+    try {
+        const res = await fetch('/api/rlm');
+        if (!res.ok) { el.innerHTML = '<div class="no-data">RLM unreachable</div>'; return; }
+        const d = await res.json();
+        if (d.error) {
+            el.innerHTML = '<div class="no-data">RLM off — ' + escapeHtml(String(d.error).slice(0, 80)) + '</div>';
+            return;
+        }
+        const bl = d.by_level || {};
+        const chips = Object.entries(bl).length
+            ? Object.entries(bl).map(([k, v]) =>
+                `<b>${escapeHtml(String(k).toUpperCase())}</b> ${v}`).join(' · ')
+            : '—';
+        const wm = d.world_model ? String(d.world_model) : '';
+        const recents = (d.recent || []).slice(0, 4);
+        const wmLine = wm
+            ? `<div class="rlm-row"><span class="rl">WORLD</span><span class="rt">${escapeHtml(wm.slice(0, 170))}${wm.length > 170 ? '…' : ''}</span></div>`
+            : '';
+        el.innerHTML =
+            `<div class="rlm-row"><span class="rl">HIER</span><span class="rt">${chips}</span></div>` +
+            `<div class="rlm-row"><span class="rl">STATE</span><span class="rt">notes ${d.notes} · pending ${d.pending_events} · unreflected ${d.unreflected} · superseded ${d.superseded} · entities ${d.entities} · ${d.vector ? 'vector ON' : 'vector OFF'}</span></div>` +
+            wmLine +
+            `<div class="rlm-row"><span class="rl">TICK</span><span class="rt">consolidation ${d.last_consolidation || 'never'} · world ${d.world_model_updated || '—'}</span></div>` +
+            (recents.length
+                ? recents.map(n => `<div class="rlm-row"><span class="rl">${RLM_LEVEL_NAMES[n.level] != null ? RLM_LEVEL_NAMES[n.level] : n.level}${n.superseded ? ' [OLD]' : ''}</span><span class="rt">${escapeHtml(String(n.text || '').slice(0, 110))}</span></div>`).join('')
+                : '<div class="rlm-row"><span class="rt">no consolidated notes yet</span></div>');
+    } catch (_) {
+        el.innerHTML = '<div class="no-data">RLM unavailable</div>';
+    }
+}
+const rlmRefreshBtn = document.getElementById('rlm-refresh-btn');
+if (rlmRefreshBtn) rlmRefreshBtn.addEventListener('click', refreshRlm);
+
+// --- JARVIS ↔ HERMES 26-FEATURE PARITY MATRIX ---
+const PARITY_FEATURES = [
+    { id: 1, group: 'Bounded learning loop', name: 'Guardrails', short: 'Self-updating USER/MEMORY/.jarvis.md', modules: 'guardrails.py', status: 2 },
+    { id: 2, group: 'Bounded learning loop', name: 'Context injection', short: '@file/@dir/@git/@url expansion', modules: 'context_injection.py', status: 2 },
+    { id: 3, group: 'Bounded learning loop', name: 'Skill forge', short: 'Telemetry → reusable SKILLS → self-patch', modules: 'skill_forge.py', status: 2 },
+    { id: 4, group: 'Bounded learning loop', name: 'FTS5 transcript search', short: 'Bounded full-text index of exchanges', modules: 'transcript_search.py', status: 2 },
+    { id: 5, group: 'Execution environments', name: 'Multi-backend runtime', short: 'local/docker/ssh/daytona/singularity/vercel/modal', modules: 'runtimes.py', status: 2 },
+    { id: 6, group: 'Execution environments', name: 'Python RPC', short: 'Persistent sandboxed worker over NDJSON', modules: 'python_rpc.py', status: 2 },
+    { id: 7, group: 'Execution environments', name: 'Checkpoints + /rollback', short: 'Snapshot before edits; restore any prior state', modules: 'checkpoints.py', status: 2 },
+    { id: 8, group: 'Execution environments', name: 'Post-edit diagnostics', short: 'Native checkers / real LSP after edit', modules: 'lsp_diagnostics.py', status: 2 },
+    { id: 9, group: 'Execution environments', name: 'Computer use', short: 'Background AX desktop driving', modules: 'computer_use.py', status: 2 },
+    { id: 10, group: 'Omnichannel gateways', name: 'Gateway hub + bot mode', short: 'Discord/Slack/webhook/Telegram via event bus', modules: 'gateways.py, telegram_bot.py', status: 2 },
+    { id: 11, group: 'Omnichannel gateways', name: 'Terminal TUI', short: 'Headless-native terminal chat', modules: 'tui.py', status: 2 },
+    { id: 12, group: 'Omnichannel gateways', name: 'HUD', short: 'Borderless always-on-top composer', modules: 'hud.py', status: 2 },
+    { id: 13, group: 'Omnichannel gateways', name: 'Wake-word gating', short: "'Hey Jarvis' / configurable phrase", modules: 'wake_word.py', status: 2 },
+    { id: 14, group: 'Automations & media', name: 'Recurring automations', short: 'NL cron + intervals across restarts', modules: 'recurring.py', status: 2 },
+    { id: 15, group: 'Automations & media', name: 'Jarvis-as-MCP-server', short: 'Export RLM/FTS/skill catalog over stdio', modules: 'mcp_server.py', status: 2 },
+    { id: 16, group: 'Automations & media', name: 'Mixture-of-agents', short: 'N providers + synthesizer', modules: 'moa.py', status: 2 },
+    { id: 17, group: 'Automations & media', name: 'Browser automation', short: 'Static → Playwright → cloud facade', modules: 'browser_use.py', status: 1 },
+    { id: 18, group: 'Automations & media', name: 'Tool gateway', short: 'Cloud browse/scrape/TTS/image with local fallbacks', modules: 'tool_gateway.py', status: 1 },
+    { id: 19, group: 'Automations & media', name: 'Hyperframe', short: 'Instructions → storyboard → self-playing HTML → mp4', modules: 'hyperframe.py', status: 2 },
+    { id: 20, group: 'Reasoning + memory', name: 'RLM recursive memory', short: 'L0→L1→L2→L3 compression + world model', modules: 'rlm/memory.py', status: 2 },
+    { id: 21, group: 'Reasoning + memory', name: 'Temporal recall scoring', short: 'Relevance × recency × importance, recency floor', modules: 'rlm/memory.py', status: 2 },
+    { id: 22, group: 'Reasoning + memory', name: 'Memory supersession', short: 'New insights replace contradicting older notes', modules: 'rlm/memory.py', status: 2 },
+    { id: 23, group: 'Reasoning + memory', name: 'Entity graph + subject recall', short: 'Who/what memory is about', modules: 'rlm/entities.py', status: 2 },
+    { id: 24, group: 'Reasoning + memory', name: 'Cross-session continuity', short: 'Re-inject prior state after idle gaps', modules: 'rlm, brain.py', status: 2 },
+    { id: 25, group: 'Reasoning + memory', name: 'Persistent task plan', short: 'Durable goal+steps plan across turns', modules: 'rlm/plan_state.py', status: 2 },
+    { id: 26, group: 'Reasoning + memory', name: 'Reasoner', short: 'Plan-before-acting, effort detection, critic/verify', modules: 'rlm/reasoner.py', status: 2 }
+];
+const PARITY_STATUS_LABELS = { 0: 'missing', 1: 'partial', 2: 'implemented', 3: 'surface-only' };
+
+function loadParity() {
+    const grid = document.getElementById('parity-grid');
+    const summary = document.getElementById('parity-summary');
+    if (!grid || !summary) return;
+    const counts = { 0: 0, 1: 0, 2: 0, 3: 0 };
+    PARITY_FEATURES.forEach(f => counts[f.status]++);
+    summary.textContent = `${counts[2]}/26 implemented, ${counts[3]} surface-only, ${counts[1]} partial — ${counts[0]} missing.`;
+    grid.innerHTML = PARITY_FEATURES.map(f => `
+        <div class="row">
+            <div class="r1">
+                <span class="t">${escapeHtml(f.name)} <span class="mem-cat">${escapeHtml(f.group)}</span></span>
+                <span class="m">${f.id}/26</span>
+            </div>
+            <div class="r2"><span class="a">${escapeHtml(f.short)}</span></div>
+            <div class="r2">
+                <span class="chip ${f.status === 2 ? 'ok' : f.status === 1 ? 'warn' : f.status === 3 ? 'skip' : 'fail'}">${PARITY_STATUS_LABELS[f.status] || '?'} </span>
+                <span class="mem-cat">${escapeHtml(f.modules)}</span>
+                <span class="btns" style="margin-left:auto;"><button class="tbtn" data-par="${f.id}">DETAILS</button></span>
+            </div>
+        </div>`).join('');
 }
 
 if (tasksBtn && tasksPanel) {
@@ -857,7 +1129,10 @@ function renderMemories(items, stats) {
 }
 
 if (memoryBtn && memoryPanel) {
-    memoryBtn.addEventListener('click', () => openPanel('memory-panel', 'memory-btn'));
+    memoryBtn.addEventListener('click', () => {
+        openPanel('memory-panel', 'memory-btn');
+        refreshRlm();
+    });
 }
 if (memoryClose) memoryClose.addEventListener('click', closeAllPanels);
 if (memoryAddBtn) {
@@ -914,13 +1189,13 @@ function renderPeople(people) {
         div.className = 'person-card';
         const hobbies = (person.hobbies || []).slice(0, 3).join(', ');
         div.innerHTML = `
-            <div>
+            <div class="grow">
                 <div class="person-name">${escapeHtml(person.name)}</div>
                 <div class="person-rel">${escapeHtml(person.relationship || '')}${hobbies ? ' | ' + escapeHtml(hobbies) : ''}</div>
             </div>
             <div class="person-actions">
-                <button data-action="gifts" title="Gift ideas">🎁</button>
-                <button data-action="remove" title="Remove">🗑️</button>
+                <button class="tbtn" data-action="gifts" title="Gift ideas">GIFT</button>
+                <button class="tbtn danger" data-action="remove" title="Remove">DEL</button>
             </div>
         `;
         div.dataset.name = person.name;
@@ -985,10 +1260,11 @@ if (meetingStartBtn) {
         meetingActive = true;
         meetingStartBtn.style.display = 'none';
         meetingStopBtn.style.display = 'block';
-        meetingStatus.textContent = '🔴 Recording...';
-        meetingStatus.style.color = '#ff5050';
+        meetingStatus.textContent = '● RECORDING';
+        meetingStatus.style.color = 'var(--fail)';
+        if (meetingTranscript) meetingTranscript.textContent = '';
         document.body.classList.add('meeting-active');
-        // Poll transcript every 5 seconds
+        // Poll transcript every 5 seconds (lands in the drawer only)
         meetingInterval = setInterval(() => {
             socket.emit('meeting_action', { action: 'transcript' });
         }, 5000);
@@ -1001,12 +1277,20 @@ if (meetingStopBtn) {
         meetingActive = false;
         meetingStopBtn.style.display = 'none';
         meetingStartBtn.style.display = 'block';
-        meetingStatus.textContent = 'Processing...';
+        meetingStatus.textContent = 'PROCESSED — TRANSCRIPT BELOW';
         meetingStatus.style.color = '';
         document.body.classList.remove('meeting-active');
         if (meetingInterval) { clearInterval(meetingInterval); meetingInterval = null; }
     });
 }
+
+// Live meeting transcript renders into the drawer, never into the chat feed.
+socket.on('meeting_transcript', (data) => {
+    if (!meetingTranscript) return;
+    const text = (data && data.text) ? String(data.text).trim() : '';
+    if (!text) return;
+    meetingTranscript.textContent = text;
+});
 
 // --- PRIVACY PANEL ---
 const privacyBtn = document.getElementById('privacy-btn');
@@ -1014,13 +1298,79 @@ const privacyPanel = document.getElementById('privacy-panel');
 const privacyClose = document.getElementById('privacy-close');
 const privacySettings = document.getElementById('privacy-settings');
 
+const TRUST_CATEGORIES = ['read', 'minor', 'medium', 'high', 'critical'];
+const TRUST_LABELS = { read: 'READ', minor: 'MINOR', medium: 'MEDIUM',
+                       high: 'HIGH', critical: 'CRITICAL' };
+const TRUST_OPTIONS = ['always', 'ask', 'deny', 'preview'];
+const SCOPE_FLAGS = [
+    ['allow_analyze_calendar', 'ANALYZE CALENDAR'],
+    ['allow_analyze_email', 'ANALYZE EMAIL'],
+    ['allow_analyze_files', 'ANALYZE FILES'],
+    ['allow_web_search', 'WEB SEARCH'],
+    ['allow_store_conversations', 'STORE CONVERSATIONS'],
+    ['prefer_local_processing', 'LOCAL PROCESSING'],
+    ['auto_approve_minor', 'AUTO-APPROVE MINOR']
+];
+
+function renderPrivacy(d) {
+    if (!privacySettings) return;
+    const settings = (d && d.settings) || {};
+    const audit = (d && d.audit) || [];
+    const summary = (d && d.summary) || '';
+    const trust = (settings.trust_levels) || {};
+    let html = '<div class="d-subhead" style="margin-top:0"><i class="tag">TRUST</i><span>ACTION TRUST LEVELS</span></div>';
+    TRUST_CATEGORIES.forEach(cat => {
+        const cur = trust[cat] || 'ask';
+        html += `<div class="setting-row">
+            <label>${TRUST_LABELS[cat] || cat.toUpperCase()}</label>
+            <span>${TRUST_OPTIONS.map(opt =>
+                `<button class="tbtn${cur === opt ? ' ok' : ''}" data-trust="${cat}" data-val="${opt}">${opt.toUpperCase()}</button>`).join('')}</span>
+        </div>`;
+    });
+    html += '<div class="d-subhead"><i class="tag">SCOPE</i><span>DATA &amp; PROCESSING</span></div>';
+    SCOPE_FLAGS.forEach(([k, label]) => {
+        const on = !!settings[k];
+        html += `<div class="setting-row">
+            <label>${label}</label>
+            <button class="tbtn${on ? ' ok' : ''}" data-flag="${k}" data-val="${on ? '0' : '1'}">${on ? '[ ON ]' : '[ OFF ]'}</button>
+        </div>`;
+    });
+    if (summary) {
+        html += '<div class="d-subhead"><i class="tag">SUM</i><span>TRUST SUMMARY</span></div>' +
+            `<div class="rlm-row"><span class="rt" style="white-space:pre-wrap">${escapeHtml(String(summary))}</span></div>`;
+    }
+    if (audit.length) {
+        html += '<div class="d-subhead"><i class="tag">AUD</i><span>LAST ACTIONS</span></div>' +
+            audit.map(a =>
+                `<div class="rlm-row"><span class="rl">${escapeHtml(String(a.date || '').slice(11, 19))}</span><span class="rt">${escapeHtml(a.action || '')}${a.details ? ' — ' + escapeHtml(String(a.details).slice(0, 80)) : ''}</span></div>`).join('');
+    }
+    privacySettings.innerHTML = html;
+}
+
 if (privacyBtn && privacyPanel) {
     privacyBtn.addEventListener('click', () => {
         openPanel('privacy-panel', 'privacy-btn');
-        socket.emit('privacy_action', { action: 'summary' });
+        socket.emit('privacy_action', { action: 'get' });
     });
 }
 if (privacyClose) privacyClose.addEventListener('click', closeAllPanels);
+
+if (privacySettings) {
+    privacySettings.addEventListener('click', (e) => {
+        const trust = e.target.closest('[data-trust]');
+        const flag = e.target.closest('[data-flag]');
+        if (trust) {
+            socket.emit('privacy_action', {
+                action: 'update_trust', key: trust.dataset.trust, value: trust.dataset.val });
+        } else if (flag) {
+            socket.emit('privacy_action', {
+                action: 'update', key: flag.dataset.flag, value: flag.dataset.val === '1' });
+        }
+    });
+}
+socket.on('privacy_update', (data) => {
+    renderPrivacy(data || {});
+});
 
 // --- MISSIONS · OPS RAIL (dense) ---
 const missionsList = document.getElementById('missions-list');
@@ -1206,54 +1556,56 @@ socket.on('tasks_history', (data) => {
 });
 socket.emit('complex_task_action', { action: 'list' });
 
-// --- MOBILE MIC LOGIC ---
+// --- VOICE INPUT (browser mic: cmd-zone [TALK] + mobile FAB) ---
 const mobileMicBtn = document.getElementById('mobile-mic-btn');
-if (mobileMicBtn) {
-    mobileMicBtn.addEventListener('click', () => {
-        if (mobileMicBtn.classList.contains('listening')) {
-            // STOP functionality
-            try {
-                recognition.stop();
-            } catch (e) { console.log(e); }
-            mobileMicBtn.classList.remove('listening');
-            addMessage("SYSTEM: Mic Stopped");
-            return;
-        }
 
-        // START functionality
-        wakeUp();
-        addMessage("SYSTEM: Listening...");
-        mobileMicBtn.classList.add('listening');
-
-        try {
-            recognition.start();
-        } catch (e) {
-            console.log("Mic error:", e);
-            if (e.message.includes('already started')) {
-                // Ignore this specific error, it means we are good
-                console.log("Mic already running, ignoring.");
-            } else {
-                alert("Mic Start Error: " + e.message);
-                mobileMicBtn.classList.remove('listening');
-            }
-        }
-    });
-
-    // Update mic button state based on recognition events
-    if (recognition) {
-        const originalOnEnd = recognition.onend;
-        recognition.onend = () => {
-            if (originalOnEnd) originalOnEnd();
-            mobileMicBtn.classList.remove('listening');
-        };
-
-        const originalOnError = recognition.onerror;
-        recognition.onerror = (e) => {
-            if (originalOnError) originalOnError(e);
-            mobileMicBtn.classList.remove('listening');
-            alert("Mic Error: " + e.error + "\n(Note: Mobile browsers often block mic on HTTP. You may need to use Chrome and enable 'Insecure origins treated as secure' flag for this IP)");
-        };
+function _micButtons() {
+    return document.querySelectorAll('#mic-btn, #mobile-mic-btn');
+}
+function _micClear() {
+    _micButtons().forEach(b => b.classList.remove('listening'));
+}
+function voiceStop() {
+    try { if (recognition) recognition.stop(); } catch (_) {}
+}
+function voiceStart() {
+    if (!recognition) {
+        addMessage('SYSTEM: Speech not supported in this browser');
+        return;
     }
+    wakeUp();
+    addMessage('SYSTEM: Listening…');
+    _micClear();
+    const btn = document.getElementById('mic-btn');
+    if (btn) btn.classList.add('listening');
+    try {
+        recognition.start();
+    } catch (e) {
+        _micClear();
+        const msg = String((e && e.message) || e || '');
+        if (!msg.includes('already started')) {
+            addMessage('SYSTEM: Mic error — ' + msg);
+        }
+    }
+}
+function voiceToggle() {
+    const micBtnEl = document.getElementById('mic-btn');
+    const active = (micBtnEl && micBtnEl.classList.contains('listening')) ||
+                   (mobileMicBtn && mobileMicBtn.classList.contains('listening'));
+    if (active) voiceStop();
+    else voiceStart();
+}
+
+const micBtnEl = document.getElementById('mic-btn');
+if (micBtnEl) micBtnEl.addEventListener('click', voiceToggle);
+if (mobileMicBtn) mobileMicBtn.addEventListener('click', voiceToggle);
+
+// Keep every mic affordance in sync with the recognizer's lifecycle.
+if (recognition) {
+    const baseOnEnd = recognition.onend;
+    const baseOnError = recognition.onerror;
+    recognition.onend = () => { if (baseOnEnd) baseOnEnd(); _micClear(); };
+    recognition.onerror = (e) => { if (baseOnError) baseOnError(e); _micClear(); };
 }
 
 
@@ -1457,6 +1809,54 @@ if (feedBtn) {
     });
 }
 
+// STUDY PERMANENTLY — same upload, but stored in the knowledge vault
+// (server ingests with store=True) instead of the 30-minute feed memory.
+const studyBtn = document.getElementById('study-btn');
+if (studyBtn) {
+    studyBtn.addEventListener('click', () => {
+        if (selectedFiles.length === 0) {
+            showToast('NO FILES', 'Drop a pdf/txt/md first, Sir.', 'warn', 2600);
+            return;
+        }
+        studyBtn.disabled = true;
+        const orig = studyBtn.textContent;
+        studyBtn.textContent = 'STUDYING…';
+        updateStatus('Studying Knowledge…');
+        setCoreState('processing');
+
+        const formData = new FormData();
+        selectedFiles.forEach(f => formData.append('files', f));
+        formData.append('study', '1');
+
+        fetch('/upload_knowledge', { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(result => {
+                if (result.success) {
+                    addMessage(`SYSTEM: ${result.message}`);
+                    updateStatus('Knowledge Stored Permanently');
+                    setCoreState('active');
+                    selectedFiles = [];
+                    updateFileList();
+                    setTimeout(closeAllPanels, 1500);
+                } else {
+                    addMessage(`ERROR: ${result.error}`);
+                    updateStatus('Ingestion Failed');
+                    setCoreState('active');
+                }
+            })
+            .catch(err => {
+                console.error('Study upload error:', err);
+                addMessage('SYSTEM: Study Upload Failed');
+                updateStatus('Connection Error');
+                setCoreState('active');
+            })
+            .finally(() => {
+                studyBtn.textContent = orig;
+                if (selectedFiles.length > 0) studyBtn.disabled = false;
+            });
+    });
+}
+
 
 /* ── WAVEFORM + HERO VISIBILITY ─────────────────────────────────────── */
 (function () {
@@ -1516,22 +1916,293 @@ if (feedBtn) {
         refreshAutomations();
     });
 
+    /* ── 2b · PROACTIVE FEED (goals, tasks, findings — unprompted) ── */
+    socket.on('proactive', (data) => {
+        const pri = (data && data.priority) || 'normal';
+        const kind = pri === 'high' ? 'error' : 'automation';
+        showToast('JARVIS', (data && data.text) || '', kind, pri === 'high' ? 12000 : 8000);
+    });
+
+    /* ── 2c · GOALS STACK ─────────────────────────────────────────── */
+    const goalsList = $('goals-list');
+    let currentGoals = [];
+
+    function renderGoals(goals) {
+        if (!goalsList) return;
+        currentGoals = goals || [];
+        const st = document.getElementById('stat-tasks');
+        if (currentGoals.length) {
+            goalsList.innerHTML = currentGoals.map(g => {
+                const over = g.status === 'overdue';
+                const done = g.status === 'done';
+                const pct = g.progress || 0;
+                const dl = g.deadline ? g.deadline.slice(5, 16).replace('T', ' ') : 'no deadline';
+                return `<div class="row" data-goal-id="${escapeHtml(g.id)}">
+                    <div class="r1">
+                        <span class="t" title="${escapeHtml(g.title)}">${over ? '⏰ ' : ''}${escapeHtml(g.title.slice(0, 44))}</span>
+                        <span class="m">${pct}% · ${escapeHtml(dl)}${done ? ' · DONE' : ''}</span>
+                    </div>
+                    <div class="r2">
+                        <span class="btns" style="margin-left:auto;">
+                            ${!done ? `<button class="tbtn" data-goal-done="${escapeHtml(g.id)}">DONE</button>` : ''}
+                            ${!done ? `<button class="tbtn danger" data-goal-drop="${escapeHtml(g.id)}">DROP</button>` : ''}
+                        </span>
+                    </div>
+                </div>`;
+            }).join('');
+        } else {
+            goalsList.innerHTML = '<div class="no-data">no open goals · say "my goal is …"</div>';
+        }
+        void st;
+    }
+
+    function refreshGoals() {
+        socket.emit('goals_action', { action: 'list' });
+    }
+    socket.on('goals_update', (data) => {
+        renderGoals(data.goals || []);
+    });
+
+    const goalsRefresh = $('goals-refresh');
+    if (goalsRefresh) goalsRefresh.addEventListener('click', refreshGoals);
+    if (goalsList) goalsList.addEventListener('click', (e) => {
+        const doneBtn = e.target.closest('[data-goal-done]');
+        const dropBtn = e.target.closest('[data-goal-drop]');
+        if (doneBtn) socket.emit('goals_action', { action: 'done', goal: doneBtn.dataset.goalDone });
+        else if (dropBtn) socket.emit('goals_action', { action: 'drop', goal: dropBtn.dataset.goalDrop });
+    });
+    refreshGoals();
+
+    /* ── 1b · CAPABILITIES STACK ───────────────────────────────────── */
+    const capsList = $('caps-list');
+
+    function renderCaps(caps) {
+        if (!capsList) return;
+        if (!caps || !caps.length) {
+            capsList.innerHTML = '<div class="no-data">loading…</div>';
+            return;
+        }
+        const grouped = {};
+        caps.forEach(c => {
+            const cat = c.category || 'other';
+            if (!grouped[cat]) grouped[cat] = [];
+            grouped[cat].push(c);
+        });
+        let html = '';
+        for (const [cat, items] of Object.entries(grouped)) {
+            html += `<div class="cap-cat">${escapeHtml(cat.toUpperCase())}</div>`;
+            items.forEach(c => {
+                const icon = c.status === 'ready' ? '✅' : c.status === 'degraded' ? '⚠️' : '❌';
+                const acquireBtn = c.status !== 'ready'
+                    ? ` <button class="tbtn cap-acquire" data-cap="${escapeHtml(c.name)}">ACQUIRE</button>`
+                    : '';
+                html += `<div class="row cap-row">
+                    <div class="r1">
+                        <span class="t">${icon} ${escapeHtml(c.name)}</span>
+                        <span class="m">${escapeHtml(c.detail || '')}</span>
+                        <span class="btns" style="margin-left:auto;">${acquireBtn}</span>
+                    </div>
+                </div>`;
+            });
+        }
+        capsList.innerHTML = html;
+    }
+
+    function refreshCaps() {
+        fetch('/api/capabilities').then(r => r.json()).then(data => {
+            renderCaps(data.capabilities || []);
+        }).catch(() => {});
+    }
+
+    const capsRefresh = $('caps-refresh');
+    if (capsRefresh) capsRefresh.addEventListener('click', refreshCaps);
+    // ACQUIRE button: expand a missing capability
+    if (capsList) capsList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.cap-acquire');
+        if (!btn) return;
+        const capName = btn.dataset.cap;
+        btn.textContent = '...';
+        btn.disabled = true;
+        fetch('/api/capabilities/expand', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({capabilities: [capName], auto: true})
+        }).then(r => r.json()).then(data => {
+            if (data.error) {
+                btn.textContent = 'FAILED';
+            } else {
+                btn.textContent = '✓ PLAN CREATED';
+                // Refresh goals stack if it exists
+                if (typeof refreshGoals === 'function') refreshGoals();
+                // Show the plan in a toast
+                if (data.formatted) {
+                    socket.emit('send_message', {message: data.formatted});
+                }
+            }
+        }).catch(() => { btn.textContent = 'ERROR'; });
+    });
+    refreshCaps();
+
+    /* ── 1c · MOBILE LINK STACK ────────────────────────────────────── */
+    const mobileList = $('mobile-list');
+    const mobileCode = $('mobile-code');
+    const mobilePairBtn = $('mobile-pair-btn');
+    const mobileQr = $('mobile-qr');
+    const mobilePairLink = $('mobile-link');
+
+    // Shareable pair link for the Lite app / QR scan:
+    //   jarvis://pair?hub=<origin>&code=<8-CHAR>
+    // The link carries no secret — the code is single-use, 10-min TTL,
+    // redeemed over POST /api/mobile/redeem like the PWA manual entry.
+    function renderPairShare(code) {
+        if (!mobileQr && !mobilePairLink) return;
+        var hub = '';
+        try { hub = window.location.origin || ''; } catch (e) {}
+        if (!hub || hub.indexOf('http') !== 0) {
+            if (mobilePairLink) {
+                mobilePairLink.style.display = '';
+                mobilePairLink.innerHTML = '<span class="m">open the dashboard via LAN IP / Tailscale name so the QR encodes a phone-reachable hub</span>';
+            }
+            return;
+        }
+        var link = 'jarvis://pair?hub=' + encodeURIComponent(hub) +
+            '&code=' + encodeURIComponent(code);
+        // Loopback origins are unreachable from a phone — a QR/link
+        // encoding 127.0.0.1 would only waste the single-use code. Warn
+        // and stop instead of rendering an unscannable share.
+        if (/(^|\/\/)(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(hub)) {
+            if (mobileQr) { mobileQr.style.display = 'none'; mobileQr.innerHTML = ''; }
+            if (mobilePairLink) {
+                mobilePairLink.style.display = '';
+                mobilePairLink.innerHTML = '<span class="m">⚠ dashboard is on loopback (' +
+                    escapeHtml(hub) + ') — phones cannot reach it. Re-open the dashboard via LAN IP / Tailscale name, then PAIR again.</span>';
+            }
+            return;
+        }
+        if (mobileQr) {
+            mobileQr.style.display = '';
+            mobileQr.innerHTML = '';
+            try {
+                if (window.QRCode) {
+                    new window.QRCode(mobileQr, {
+                        text: link, width: 140, height: 140,
+                        correctLevel: window.QRCode.CorrectLevel.M });
+                } else {
+                    mobileQr.innerHTML = '<span class="m">QR lib offline — use the code</span>';
+                }
+            } catch (e) {
+                mobileQr.innerHTML = '<span class="m">QR failed — use the code</span>';
+            }
+        }
+        if (mobilePairLink) {
+            mobilePairLink.style.display = '';
+            mobilePairLink.innerHTML = ''
+                + '<div>' + escapeHtml(link) + '</div>'
+                + '<button class="tbtn" id="mob-copy-link">COPY LINK</button>';
+            var copyBtn = document.getElementById('mob-copy-link');
+            if (copyBtn) copyBtn.addEventListener('click', function () {
+                var done = function (ok) {
+                    copyBtn.textContent = ok ? 'COPIED' : 'COPY FAILED';
+                    setTimeout(function () { copyBtn.textContent = 'COPY LINK'; }, 1600);
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(link).then(
+                            function () { done(true); },
+                            function () { done(false); });
+                    } else { done(false); }
+                } catch (e) { done(false); }
+            });
+        }
+    }
+
+    function clearPairShare() {
+        if (mobileQr) { mobileQr.style.display = 'none'; mobileQr.innerHTML = ''; }
+        if (mobilePairLink) { mobilePairLink.style.display = 'none'; mobilePairLink.innerHTML = ''; }
+    }
+
+    function renderMobile(devices) {
+        if (!mobileList) return;
+        if (!devices || !devices.length) {
+            mobileList.innerHTML = '<div class="no-data">no paired phones</div>';
+            return;
+        }
+        mobileList.innerHTML = devices.map(d => {
+            const seen = d.last_seen
+                ? new Date(d.last_seen * 1000).toLocaleString() : 'never';
+            return `<div class="row mob-row"><div class="r1">`
+                + `<span class="t">📱 ${escapeHtml(d.name || d.device_id)}</span>`
+                + `<span class="m">seen ${escapeHtml(seen)}</span>`
+                + `<span class="btns" style="margin-left:auto;">`
+                + `<button class="tbtn mob-revoke" data-dev="${escapeHtml(d.device_id)}">REVOKE</button>`
+                + `</span></div></div>`;
+        }).join('');
+    }
+
+    function refreshMobile() {
+        fetch('/api/mobile/devices').then(r => r.json()).then(data => {
+            renderMobile(data.devices || []);
+        }).catch(() => {});
+    }
+
+    if (mobilePairBtn) mobilePairBtn.addEventListener('click', () => {
+        mobilePairBtn.textContent = '...';
+        fetch('/api/mobile/pair', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})}).then(r => r.json()).then(data => {
+            mobilePairBtn.textContent = 'PAIR';
+            if (!mobileCode) return;
+            if (data.ok) {
+                const ttl = data.expires_at
+                    ? new Date(data.expires_at * 1000).toLocaleTimeString() : '';
+                mobileCode.style.display = '';
+                mobileCode.innerHTML = `CODE <b>${escapeHtml(data.code)}</b>`
+                    + ` <span class="m">expires ${escapeHtml(ttl)} · single-use</span>`;
+                renderPairShare(data.code);
+            } else {
+                clearPairShare();
+                mobileCode.style.display = '';
+                mobileCode.innerHTML = `<span class="m">pairing failed: `
+                    + `${escapeHtml(data.error || 'unknown error')}</span>`;
+            }
+        }).catch(() => { mobilePairBtn.textContent = 'ERROR'; });
+    });
+    if (mobileList) mobileList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.mob-revoke');
+        if (!btn) return;
+        btn.textContent = '...';
+        btn.disabled = true;
+        fetch('/api/mobile/devices/' + encodeURIComponent(btn.dataset.dev),
+            {method: 'DELETE'}).then(r => r.json()).then(() => refreshMobile())
+            .catch(() => { btn.textContent = 'ERROR'; });
+    });
+    refreshMobile();
+
     /* ── 2 · AUTOMATIONS STACK ─────────────────────────────────────── */
     const automationList = $('automation-list');
     let automationJobs = [];
 
     function renderAutomations() {
         if (!automationList) return;
-        const nextEl = $('stat-next');
-        if (nextEl) nextEl.textContent =
-            automationJobs[0] && automationJobs[0].next
-                ? automationJobs[0].next.split('(')[0].trim() : '—';
-
         if (!automationJobs.length) {
+            const nextEl = $('stat-next');
+            if (nextEl) nextEl.textContent = '—';
             automationList.innerHTML = '<div class="no-data">none · try: every day at 9am …</div>';
             return;
         }
-        automationList.innerHTML = automationJobs.map(j => {
+        // Soonest next-fire first (the server orders by id, not by time —
+        // sorting here keeps the NEXT stat honest about what fires next).
+        const sorted = automationJobs.slice().sort((a, b) => {
+            const ta = a.next_ts == null ? Infinity : a.next_ts;
+            const tb = b.next_ts == null ? Infinity : b.next_ts;
+            return ta - tb;
+        });
+        const nextEl = $('stat-next');
+        if (nextEl) {
+            const soon = sorted.find(j => j.next != null);
+            nextEl.textContent = soon ? soon.next.split('(')[0].trim() : '—';
+        }
+        automationList.innerHTML = sorted.map(j => {
             const hist = (j.history || []).slice(0, 3).map(h =>
                 `<i class="${h.ok ? 'ok' : 'fail'}"></i>`).join('');
             return `<div class="row">
@@ -1679,10 +2350,22 @@ if (feedBtn) {
                 <button class="arg-submit">RUN</button>
             </div>`;
         document.body.appendChild(backdrop);
+        const submitBtn = backdrop.querySelector('.arg-submit');
         const close = () => backdrop.remove();
+        const first = backdrop.querySelector('[data-arg]');
+        if (first) first.focus();
+        // Full keyboard flow, matching the palette: Enter runs, Escape cancels.
+        backdrop.querySelectorAll('[data-arg]').forEach(inp => {
+            inp.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') { ev.preventDefault(); submitBtn.click(); }
+            });
+        });
+        backdrop.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
+        });
         backdrop.querySelector('.arg-cancel').addEventListener('click', close);
         backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
-        backdrop.querySelector('.arg-submit').addEventListener('click', () => {
+        submitBtn.addEventListener('click', () => {
             const values = {};
             let missing = null;
             backdrop.querySelectorAll('[data-arg]').forEach(inp => {
@@ -1871,7 +2554,8 @@ if (feedBtn) {
         { code: 'MTG', label: 'meeting mode', act: () => openPanel('meeting-panel', 'meeting-btn') },
         { code: 'SEC', label: 'privacy', act: () => openPanel('privacy-panel', 'privacy-btn') },
         { code: 'LIB', label: 'knowledge upload', act: () => openPanel('librarian-panel', 'librarian-btn') },
-        { code: 'SKL', label: 'skills & tools', act: () => openPanel('capabilities-panel', 'skills-btn') },
+        { code: 'SKL', label: 'skills & tools', act: () => { openPanel('capabilities-panel', 'skills-btn'); socket.emit('skills_action', { action: 'list' }); socket.emit('tools_action', { action: 'list' }); } },
+        { code: 'PAR', label: 'jarvis vs hermes parity', act: () => openPanel('parity-panel', 'parity-btn') },
         { code: 'LLM', label: 'ai providers · byok', act: () => openPanel('llm-panel', 'llm-btn') },
         { code: 'VIS', label: 'vision scan', act: () => $('vision-btn') && $('vision-btn').click() },
         { code: 'DEV', label: 'dev focus', act: () => $('dev-btn') && $('dev-btn').click() },
@@ -1936,6 +2620,17 @@ if (feedBtn) {
             e.preventDefault();
             if (palBackdrop && palBackdrop.classList.contains('open')) closePalette();
             else openPalette();
+        }
+    });
+    // Escape walks the overlay stack: arg dialog → palette → open drawer.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const arg = document.querySelector('.arg-dialog-backdrop');
+        if (arg) { arg.remove(); return; }
+        if (palBackdrop && palBackdrop.classList.contains('open')) { closePalette(); return; }
+        if (typeof closeAllPanels === 'function' &&
+            document.querySelector('.drawer.active')) {
+            closeAllPanels();
         }
     });
 })();

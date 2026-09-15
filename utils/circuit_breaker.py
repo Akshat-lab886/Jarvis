@@ -69,15 +69,90 @@ class CircuitBreaker:
     def _check_providers(self):
         try:
             from config import Config
-            has_groq = bool(getattr(Config, 'GROQ_API_KEY', None))
-            has_gemini = bool(getattr(Config, 'GOOGLE_API_KEY', None))
-            ok = has_groq or has_gemini
             detail = []
-            if has_groq:
+            if bool(getattr(Config, 'GROQ_API_KEY', None)):
                 detail.append("Groq")
-            if has_gemini:
+            if bool(getattr(Config, 'GOOGLE_API_KEY', None)):
                 detail.append("Gemini")
-            return ok, ok or False, \
+            # BYOK fleet: keystore overlay (dashboard-added keys) + env
+            # for every other provider.  The old Groq/Gemini-only check
+            # tripped the breaker for OpenAI/Anthropic-only users even
+            # though Brain.complete serves them fine via the router —
+            # which also starved the RLM reflector/archivist (they call
+            # Brain.complete, which refuses to spend when tripped).
+            try:
+                from utils.llm.keystore import get_keystore
+                ks = get_keystore()
+                for _name, _label, _envs in (
+                        ('openai', 'OpenAI', ('OPENAI_API_KEY',)),
+                        ('anthropic', 'Anthropic',
+                         ('ANTHROPIC_API_KEY',)),
+                        ('openrouter', 'OpenRouter',
+                         ('OPENROUTER_API_KEY',)),
+                        ('deepseek', 'DeepSeek', ('DEEPSEEK_API_KEY',)),
+                        ('custom', 'Custom',
+                         ('CUSTOM_OPENAI_API_KEY',
+                          'CUSTOM_OPENAI_BASE_URL',))):
+                    try:
+                        _has = bool(ks.get(_name))
+                    except Exception:
+                        _has = False
+                    if not _has:
+                        import os as _os
+                        _has = any(bool(_os.getenv(_e, '').strip())
+                                   for _e in _envs)
+                    if _has and _label not in detail:
+                        detail.append(_label)
+            except Exception:
+                pass
+            # Offline-first: a reachable local server (Ollama/LM Studio,
+            # no key needed) also lights the fleet.  Without this a
+            # local-only user trips the breaker, and the tripped breaker
+            # starves the RLM reflector/archivist (their consolidation
+            # spend goes through Brain.complete, which refuses while
+            # tripped) — the hierarchy would stall at L0 with no sleep
+            # pass.  Reuses the provider's own probe (short timeout),
+            # only when no key was found, so the boot path never hangs
+            # on it.  Honors the local-disable switches in factory
+            # config so users CAN opt out without tripping either: a
+            # disabled endpoint must never count as "configured".
+            if not detail:
+                try:
+                    import os as _os2
+                    _local_off = (_os2.getenv('JARVIS_DISABLE_LOCAL',
+                                              '') == '1')
+                    _ollama_url = _os2.getenv(
+                        'OLLAMA_BASE_URL',
+                        'http://localhost:11434/v1').strip()
+                    _lmstudio_url = _os2.getenv(
+                        'LMSTUDIO_BASE_URL',
+                        'http://localhost:1234/v1').strip()
+                    if not _local_off and _ollama_url.lower() not in (
+                            '', 'off', 'none', 'disabled'):
+                        from utils.llm.providers.openai_compat import (
+                            OpenAICompatProvider as _Compat)
+                        if _Compat("ollama", _ollama_url,
+                                   key_optional=True,
+                                   dynamic_models=True).available():
+                            detail.append('Ollama')
+                    if not _local_off and _lmstudio_url.lower() not in (
+                            '', 'off', 'none', 'disabled'):
+                        from utils.llm.providers.openai_compat import (
+                            OpenAICompatProvider as _Compat2)
+                        if _Compat2("lmstudio", _lmstudio_url,
+                                    key_optional=True,
+                                    dynamic_models=True).available():
+                            detail.append('LM Studio')
+                except Exception:
+                    pass
+            ok = bool(detail)
+            # Missing providers is FATAL (tripped, not degraded): with no
+            # fleet Brain.complete refuses to spend, so the RLM
+            # reflector/archivist sleep pass stalls cleanly instead of
+            # burning failover attempts every tick.  (The old
+            # `ok or False` returned fatal=False on the failure path,
+            # downgrading "no keys at all" to degraded.)
+            return ok, True, \
                 ("configured: " + ", ".join(detail)) if detail \
                 else "no LLM API key found"
         except Exception as e:
@@ -106,8 +181,39 @@ class CircuitBreaker:
             return False, False, f"stat failed: {e}"
 
     def _check_memory_backends(self):
-        """JSON stores must be writable; vector layer is optional."""
+        """
+        JSON stores must be writable; vector layer is optional.
+
+        RLM-readiness: the recursive memory JSON
+        (brain/data/rlm_memory.json) must be creatable alongside the
+        legacy episodic store — if it is
+        not, the L0 observe path degrades to in-memory-only and the
+        hierarchy silently loses everything on restart.  A read-only or
+        uncreatable RLM dir is therefore checked exactly like the
+        episodic one (non-fatal: degraded, never tripped).
+        """
         problems = []
+        try:
+            from utils.rlm.memory import DEFAULT_DATA_FILE
+            _rlm_file = (os.getenv('JARVIS_RLM_DATA_FILE', '').strip()
+                         or DEFAULT_DATA_FILE)
+            _rlm_dir = os.path.dirname(_rlm_file)
+            # No makedirs here: a check must never create real dirs as a
+            # side effect (breaker runs at boot AND inside unit tests).
+            # A missing dir is fine iff its parent is writable (the RLM
+            # store creates it on first save); otherwise flag it.
+            if os.path.isdir(_rlm_dir):
+                if not os.access(_rlm_dir, os.W_OK):
+                    problems.append(f"rlm dir read-only: {_rlm_dir}")
+                elif os.path.exists(_rlm_file) and not os.access(
+                        _rlm_file, os.W_OK):
+                    problems.append(
+                        f"rlm store read-only: "
+                        f"{os.path.basename(_rlm_file)}")
+            elif not os.access(os.path.dirname(_rlm_dir) or '.', os.W_OK):
+                problems.append(f"rlm parent dir unwritable: {_rlm_dir}")
+        except Exception as e:
+            problems.append(f"rlm store check failed: {e}")
         try:
             episodic = os.path.join(self.base_dir, 'episodic_memory.json')
             if os.path.exists(episodic) and not os.access(episodic, os.W_OK):

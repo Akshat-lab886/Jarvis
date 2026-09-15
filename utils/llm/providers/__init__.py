@@ -111,14 +111,29 @@ def build_providers(keystore=None):
             models=_env_models("CUSTOM_OPENAI_MODELS", [])))
 
     # --- Local servers (no key needed; probed for reachability) ---------- #
+    # Offline-first, fail-soft: JARVIS_DISABLE_LOCAL=1 or an explicit
+    # off/none/disabled URL opts out WITHOUT a network probe (boot never
+    # hangs on it).  Mirrors the circuit-breaker + diagnostics checks so
+    # the fleet and the breaker can never disagree about "local ready"
+    # (a disagreement would either trip local-only users or stall the
+    # RLM reflector/archivist behind a tripped breaker).
+    _local_off = os.getenv('JARVIS_DISABLE_LOCAL', '') == '1'
     ollama_url = os.getenv('OLLAMA_BASE_URL',
                            'http://localhost:11434/v1').strip()
-    _add(OpenAICompatProvider("ollama", ollama_url, key=None,
-                              key_optional=True, dynamic_models=True))
+    if not _local_off and ollama_url.lower() not in (
+            '', 'off', 'none', 'disabled'):
+        _add(OpenAICompatProvider("ollama", ollama_url, key=None,
+                                  key_optional=True, dynamic_models=True))
+    else:
+        logger.info("Provider 'ollama' disabled by config — skipped")
 
     lmstudio_url = os.getenv('LMSTUDIO_BASE_URL',
                              'http://localhost:1234/v1').strip()
-    _add(OpenAICompatProvider("lmstudio", lmstudio_url, key=None,
-                              key_optional=True, dynamic_models=True))
+    if not _local_off and lmstudio_url.lower() not in (
+            '', 'off', 'none', 'disabled'):
+        _add(OpenAICompatProvider("lmstudio", lmstudio_url, key=None,
+                                  key_optional=True, dynamic_models=True))
+    else:
+        logger.info("Provider 'lmstudio' disabled by config — skipped")
 
     return providers

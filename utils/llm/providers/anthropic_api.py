@@ -37,13 +37,43 @@ class AnthropicProvider(BaseProvider):
     def _convert_messages(messages):
         """
         OpenAI-style → Anthropic style.  Returns ``(system, messages)``.
-        System text is hoisted out; images become content blocks.
+
+        System text is hoisted out; images become content blocks.  Native
+        tool conversations survive too: an assistant message's top-level
+        ``tool_calls`` become ``tool_use`` content blocks, and ``role:
+        "tool"`` results become ``tool_result`` blocks inside the user
+        turn that must follow them.  Consecutive results are coalesced so
+        the history keeps strictly alternating roles, as the Anthropic
+        API requires.
         """
         system_parts = []
         out = []
+        pending_tool_results = []   # tool_result blocks awaiting a user turn
+
+        def _flush_tool_results():
+            if not pending_tool_results:
+                return
+            if out and out[-1].get('role') == 'user':
+                out[-1]['content'].extend(pending_tool_results)
+            else:
+                out.append({"role": "user",
+                            "content": list(pending_tool_results)})
+            del pending_tool_results[:]
+
+        def _append(role, blocks):
+            if not blocks:
+                return
+            # Two consecutive user turns (a text message landing right
+            # after a batch of tool results) merge into one.
+            if role == 'user' and out and out[-1].get('role') == 'user':
+                out[-1]['content'].extend(blocks)
+            else:
+                out.append({"role": role, "content": blocks})
+
         for msg in messages:
             role = msg.get('role')
             content = msg.get('content', '')
+
             if role == 'system':
                 if isinstance(content, str):
                     system_parts.append(content)
@@ -52,21 +82,60 @@ class AnthropicProvider(BaseProvider):
                     if text:
                         system_parts.append(text)
                 continue
-            if isinstance(content, str):
-                out.append({"role": role,
-                            "content": [{"type": "text", "text": content}]})
+
+            if role == 'tool':
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": msg.get('tool_call_id') or '',
+                    "content": str(content or ''),
+                })
                 continue
-            text, images = BaseProvider._split_images(content)
-            blocks = []
+
+            # Any non-tool message ends the run of tool results first.
+            _flush_tool_results()
+
+            text, images = (content, []) if isinstance(content, str) \
+                else BaseProvider._split_images(content)
+            blocks = [{"type": "image",
+                       "source": {"type": "base64",
+                                  "media_type": media,
+                                  "data": b64}}
+                      for media, b64 in images]
+
+            tool_calls = msg.get('tool_calls') or []
+            if role == 'assistant' and tool_calls:
+                # Requested calls become tool_use blocks.
+                for i, tc in enumerate(tool_calls):
+                    if isinstance(tc, dict):
+                        fn = tc.get('function') or tc
+                        tcid = tc.get('id') or fn.get('id') or f"call_{i}"
+                        name = fn.get('name', '') or ''
+                        args = fn.get('arguments', '{}')
+                    else:
+                        fn = getattr(tc, 'function', tc)
+                        tcid = (getattr(tc, 'id', '') or ''
+                                or getattr(fn, 'id', '') or f"call_{i}")
+                        name = getattr(fn, 'name', '') or ''
+                        args = getattr(fn, 'arguments', '{}')
+                    if isinstance(args, str):
+                        try:
+                            parsed = json.loads(args)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            parsed = {}
+                    else:
+                        parsed = args
+                    if not isinstance(parsed, dict):
+                        parsed = {}
+                    if text:
+                        blocks.insert(0, {"type": "text", "text": text})
+                        text = ""            # text emitted once, before calls
+                    blocks.append({"type": "tool_use", "id": tcid,
+                                   "name": name, "input": parsed})
             if text:
-                blocks.append({"type": "text", "text": text})
-            for media, b64 in images:
-                blocks.append({"type": "image",
-                               "source": {"type": "base64",
-                                          "media_type": media,
-                                          "data": b64}})
-            if blocks:
-                out.append({"role": role, "content": blocks})
+                blocks.insert(0, {"type": "text", "text": text})
+            _append(role, blocks)
+
+        _flush_tool_results()          # trailing results still pending
         return "\n\n".join(system_parts), out
 
     @staticmethod

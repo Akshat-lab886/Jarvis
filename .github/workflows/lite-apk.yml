@@ -1,0 +1,40 @@
+name: lite-apk
+
+on:
+  push:
+    paths:
+      - "mobile_lite/**"
+      - ".github/workflows/lite-apk.yml"
+  pull_request:
+    paths:
+      - "mobile_lite/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile_lite
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter create --platforms=android .
+      - run: flutter build apk --debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-lite-debug-apk
+          path: mobile_lite/build/app/outputs/flutter-apk/app-debug.apk

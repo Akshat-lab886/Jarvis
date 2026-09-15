@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    SECRET_KEY = os.getenv('SECRET_KEY', 'mysecret')
+    SECRET_KEY = os.getenv('SECRET_KEY') or os.urandom(32).hex()
     PORT = int(os.getenv('PORT', 5001))
-    DEBUG = os.getenv('DEBUG', 'True') == 'True'
+    DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
     # Serve HTTPS with a persistent self-signed cert (browser warning once, then trusted)
     HTTPS = os.getenv('HTTPS', 'False') == 'True'

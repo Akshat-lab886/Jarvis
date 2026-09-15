@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D0F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis Lite">
+<title>Jarvis Lite · Mobile</title>
+<link rel="manifest" href="/mobile-manifest.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/mobile.css">
+</head>
+<body>
+<header class="top">
+  <span class="dot" id="dot"></span>
+  <span class="title">JARVIS LITE</span>
+  <span class="stat" id="stat">OFFLINE</span>
+</header>
+
+<!-- Pairing view: shown when no device token is stored -->
+<section id="pair" class="card">
+  <h1>PAIR WITH HUB</h1>
+  <p class="hint">On your Mac dashboard: MOBILE LINK → PAIR → enter the 8-char code here (single-use, 10 min).</p>
+  <label>HUB URL
+    <input id="hub" inputmode="url" autocomplete="off" spellcheck="false">
+  </label>
+  <label>PAIRING CODE
+    <input id="code" autocomplete="off" autocapitalize="characters" spellcheck="false"
+           maxlength="8" placeholder="e.g. 7KQ2PX4M">
+  </label>
+  <label>DEVICE NAME
+    <input id="dname" autocomplete="off" placeholder="e.g. Pixel 8">
+  </label>
+  <label>OR PASTE PAIR LINK
+    <input id="plink" autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="jarvis://pair?hub=..&code=..">
+  </label>
+  <button id="fromlink">USE LINK</button>
+  <button id="redeem" class="primary">REDEEM &amp; CONNECT</button>
+  <p class="err" id="pair-err"></p>
+</section>
+
+<!-- Chat view: shown once paired -->
+<main id="chat" hidden>
+  <div id="msgs" aria-live="polite"></div>
+  <div id="hub-events"></div>
+  <footer class="bar">
+    <input id="in" autocomplete="off" placeholder="ask jarvis…" enterkeyhint="send">
+    <button id="send" class="primary">SEND</button>
+    <button id="note" title="Save as memory note (syncs, works offline)">NOTE</button>
+    <button id="sync" title="Push queued notes + pull hub events">SYNC</button>
+  </footer>
+  <details class="more">
+    <summary>MORE · handoff / unpair</summary>
+    <div class="row">
+      <button id="pull">PULL HANDOFF</button>
+      <button id="push">PUSH HANDOFF</button>
+      <button id="unpair" class="danger">UNPAIR</button>
+    </div>
+    <p class="hint" id="cursor">cursor 0 · outbox 0</p>
+  </details>
+</main>
+
+<script src="/static/mobile.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/mobile-sw.js').catch(function(){});
+}
+</script>
+</body>
+</html>

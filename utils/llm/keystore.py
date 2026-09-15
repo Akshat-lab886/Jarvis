@@ -11,6 +11,16 @@ import json
 import threading
 import logging
 
+# The router/keystore is also used standalone (probes, scripts) where
+# config.py — the normal load_dotenv() caller — may never be imported.
+# Load .env here too so CUSTOM_OPENAI_* / JARVIS_PROVIDER_ORDER from the
+# file are visible. Idempotent; no-op when already loaded.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 logger = logging.getLogger("Jarvis.LLM.Keystore")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -80,7 +90,12 @@ class Keystore:
             overlay = self._read_overlay()
             if provider in overlay:
                 del overlay[provider]
-                with open(self.path, 'w') as fh:
+                # Rewrite with 0600 like set(): a plain open() would
+                # re-persist any REMAINING keys at the default (often
+                # world-readable 0644) umask.
+                fd = os.open(self.path,
+                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'w') as fh:
                     json.dump(overlay, fh, indent=2)
 
     # ---------------------------------------------------------------- #

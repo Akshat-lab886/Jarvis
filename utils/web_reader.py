@@ -151,27 +151,47 @@ def get_answer_from_web(query):
     Returns:
         str: Detailed information from the web
     """
-    print(f"Getting web answer for: {query}")
-    
-    # Special handling for common query types
+    # Never crash on a missing/blank question (the tool layer can hand us
+    # None or whitespace); answer gracefully instead of AttributeError.
+    query = str(query or '').strip()
+    if not query:
+        return "I need a question to look up."
     query_lower = query.lower()
-    
+    print(f"Getting web answer for: {query}")
+
     # For weather, use wttr.in
     if 'weather' in query_lower:
         try:
             location = ""
             for word in ['in', 'at', 'for']:
-                if word in query_lower:
-                    parts = query_lower.split(word)
-                    if len(parts) > 1:
-                        location = parts[1].strip().split()[0] if parts[1].strip() else ""
+                idx = query_lower.find(word)
+                if idx >= 0:
+                    # Take everything after the preposition, trimmed of
+                    # punctuation and trailing filler words — not just the
+                    # first token ("weather in New York" must not ask for
+                    # "new").
+                    tail = query_lower[idx + len(word):]
+                    tail = re.split(r'[.,;:!?]\s*', tail, maxsplit=1)[0]
+                    location = tail.strip()
+                    break
+            if location:
+                for filler in (' today', ' now', ' tomorrow', ' tonight',
+                               ' this week', ' please', ' and '):
+                    cut = location.find(filler)
+                    if cut > 0:
+                        location = location[:cut]
                         break
-            
-            url = f"https://wttr.in/{location}?format=3" if location else "https://wttr.in/?format=3"
+                location = location.strip(' -')
+            from urllib.parse import quote
+            url = (f"https://wttr.in/{quote(location)}?format=3"
+                   if location else "https://wttr.in/?format=3")
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
-                return f"Current weather: {response.text.strip()}"
-        except:
+                body = response.text.strip()
+                # wttr.in returns "Sorry, ..." for unknown locations
+                if body and 'Sorry' not in body:
+                    return f"Current weather: {body}"
+        except Exception:
             pass
     
     # For definitions, try Wikipedia first

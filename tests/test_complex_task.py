@@ -738,6 +738,128 @@ class TestBrainFormat(IsolatedTestCase):
 
 
 # ====================================================================== #
+# Autonomy hooks — goal progress + completion announcements.
+# The _run_task hook calls task._goal_progress_for + notifier.announce;
+# both are fully stubbed here (no goals store writes, no sockets).
+# ====================================================================== #
+
+class TestGoalProgressHook(unittest.TestCase):
+    def test_progress_for_unlinked_task_empty(self):
+        import utils.complex_task as ct
+        import utils.goals as goals_mod
+
+        class FakeStore:
+            def list(self, include_done=False):
+                return [{'id': 'g1', 'task_ids': ['other-task'],
+                         'title': 'Other'}]
+
+        orig = goals_mod.get_goals
+        goals_mod.get_goals = lambda *a, **k: FakeStore()
+        try:
+            mgr = ct.ComplexTaskManager.__new__(
+                ct.ComplexTaskManager)
+            mgr.get_task = lambda tid: None
+            self.assertEqual(mgr._goal_progress_for('nope'), [])
+        finally:
+            goals_mod.get_goals = orig
+
+    def test_progress_averages_linked_tasks(self):
+        import utils.complex_task as ct
+        import utils.goals as goals_mod
+
+        class FakeTask:
+            def __init__(self, pct):
+                self._pct = pct
+            def progress_pct(self):
+                return self._pct
+
+        class FakeStore:
+            def list(self, include_done=False):
+                return [{'id': 'g1', 'task_ids': ['t1', 't2'],
+                         'title': 'Goal'}]
+
+        orig = goals_mod.get_goals
+        goals_mod.get_goals = lambda *a, **k: FakeStore()
+        try:
+            mgr = ct.ComplexTaskManager.__new__(ct.ComplexTaskManager)
+            mgr.get_task = lambda tid: {'t1': FakeTask(100),
+                                        't2': FakeTask(50)}.get(tid)
+            self.assertEqual(mgr._goal_progress_for('t1'),
+                             [('g1', 75)])
+            # back-compat alias resolves identically
+            self.assertEqual(mgr._goal_progress('t1'), [('g1', 75)])
+        finally:
+            goals_mod.get_goals = orig
+
+    def test_run_task_hook_announces_and_links(self):
+        # A completed task with no linked goal still announces via the
+        # notifier (stubbed) and never raises without a goals store.
+        import utils.complex_task as ct
+        import utils.notify as notify_mod
+
+        announced = []
+        orig_nb = notify_mod.get_notifier
+
+        class FakeNb:
+            def announce(self, text, priority='normal'):
+                announced.append((text, priority))
+                return True
+
+        notify_mod.get_notifier = lambda *a, **k: FakeNb()
+        try:
+            mgr = ct.ComplexTaskManager.__new__(ct.ComplexTaskManager)
+            mgr._lock = threading.Lock()
+            mgr._active_threads = {}
+            mgr._tasks = {}
+            mgr._pause_events = {}
+            mgr._context_locks = {}
+            mgr.get_task = lambda tid: mgr._tasks.get(tid)
+            mgr._save_task = lambda t: None
+            mgr._emit_task_update = lambda t: None
+            mgr._emit = lambda e, d: None
+            import utils.self_learning as sl
+            orig_review = sl.review_task
+            sl.review_task = lambda *a, **k: None
+            try:
+                import utils.goals as goals_mod
+                orig_goals = goals_mod.get_goals
+                orig_check = goals_mod.check_goal_completion
+                orig_on = goals_mod.enabled
+                goals_mod.get_goals = lambda *a, **k: (_ for _ in ()).throw(
+                    RuntimeError("no store"))
+                goals_mod.check_goal_completion = lambda **k: []
+                goals_mod.enabled = lambda: True
+                try:
+                    task = ct.ComplexTask(
+                        't1', 'Do the thing',
+                        [ct.TaskStep(1, 'step one')])
+                    task.status = ct.TaskStatus.RUNNING
+                    mgr._tasks = {'t1': task}
+                    mgr.brain = MockBrain()
+                    mgr.executor = MockExecutor()
+                    # No LLM, no subprocess: pretend the step ran.
+                    mgr._execute_step = lambda t, s: (
+                        setattr(s, 'status',
+                                ct.StepStatus.COMPLETED),
+                        setattr(s, 'result', 'ok'))
+                    mgr._reflect = lambda t: None
+                    mgr._synthesize = lambda t, recovery=None: "Done."
+                    mgr._run_task('t1')
+                    self.assertEqual(task.status, ct.TaskStatus.COMPLETED)
+                    self.assertTrue(
+                        any('Background task done' in a[0]
+                            for a in announced))
+                finally:
+                    goals_mod.get_goals = orig_goals
+                    goals_mod.check_goal_completion = orig_check
+                    goals_mod.enabled = orig_on
+            finally:
+                sl.review_task = orig_review
+        finally:
+            notify_mod.get_notifier = orig_nb
+
+
+# ====================================================================== #
 # Coder (real execution engine)
 # ====================================================================== #
 

@@ -43,9 +43,31 @@ CONFIG_PATH = os.path.join(ROOT, 'config', 'mcp_servers.json')
 
 PROTOCOL_VERSION = "2024-11-05"
 CLIENT_INFO = {"name": "jarvis", "version": "1.0"}
-START_TIMEOUT = float(os.getenv('JARVIS_MCP_START_TIMEOUT', '15'))
-CALL_TIMEOUT = float(os.getenv('JARVIS_MCP_CALL_TIMEOUT', '30'))
-MAX_SERVERS = int(os.getenv('JARVIS_MCP_MAX_SERVERS', '8'))
+
+
+def _env_float(name, default, floor=None):
+    """Parse a float env var safely: a malformed value falls back to the
+    default instead of crashing the module at import, and a floor keeps
+    a 0/negative value from producing an instant/negative subprocess
+    timeout."""
+    try:
+        value = float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        value = float(default)
+    return value if floor is None else max(floor, value)
+
+
+def _env_int(name, default, floor=None):
+    try:
+        value = int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        value = int(default)
+    return value if floor is None else max(floor, value)
+
+
+START_TIMEOUT = _env_float('JARVIS_MCP_START_TIMEOUT', '15', floor=1.0)
+CALL_TIMEOUT = _env_float('JARVIS_MCP_CALL_TIMEOUT', '30', floor=1.0)
+MAX_SERVERS = _env_int('JARVIS_MCP_MAX_SERVERS', '8', floor=1)
 
 
 def load_server_configs(path=None):

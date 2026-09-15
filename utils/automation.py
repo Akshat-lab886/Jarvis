@@ -1,6 +1,7 @@
 import subprocess
 import os
 import time
+import re
 import signal
 from utils.logger import logger
 
@@ -50,16 +51,31 @@ class Automation:
 
     def close_chrome(self):
         """Closes the automation browser."""
-        # Method 1: Kill via process object
+        # Method 1: Kill via process object (this instance launched it)
         if self.chrome_process:
             self.chrome_process.terminate()
+            try:
+                self.chrome_process.wait(timeout=5)
+            except Exception:
+                pass
             self.chrome_process = None
             return "Browser closed."
-            
-        # Method 2: Kill via pkill (cleanup)
+
+        # Method 2: clean up a leftover instance from an earlier session.
+        # The port alone is NOT enough to identify it — any unrelated
+        # Chrome/CDP process may listen on 9222, and ``pkill -f <port>``
+        # would kill a browser this instance never launched.  Match the
+        # port AND our dedicated profile dir (every instance we spawn
+        # carries both, in this order), and honour pkill's return code so
+        # a no-op is reported honestly instead of an implicit success.
+        pattern = (f"remote-debugging-port={self.port}.*"
+                   f"user-data-dir={re.escape(self.profile_dir)}")
         try:
-            subprocess.run(f"pkill -f 'remote-debugging-port={self.port}'", shell=True)
-            return "Browser processes terminated."
+            proc = subprocess.run(["pkill", "-f", pattern],
+                                  capture_output=True, text=True)
+            if proc.returncode == 0:
+                return "Browser processes terminated."
+            return "No automation browser is running."
         except Exception as e:
             return f"Error closing browser: {e}"
 

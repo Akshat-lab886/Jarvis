@@ -8,6 +8,17 @@ class ProjectManager:
         if not os.path.exists(self.workspace_dir):
             os.makedirs(self.workspace_dir)
 
+    def _resolve(self, *parts):
+        """Resolve *parts* under Jarvis_Projects; None if a '..' or
+        absolute part would escape it.  project_name / file_path /
+        command come from the LLM, so no path built from them may ever
+        address the host filesystem."""
+        ws = os.path.abspath(self.workspace_dir)
+        cand = os.path.abspath(os.path.join(ws, *parts))
+        if cand == ws or cand.startswith(ws + os.sep):
+            return cand
+        return None
+
     def create_project(self, project_name, project_type):
         """
         Scaffolds a new project.
@@ -15,7 +26,9 @@ class ProjectManager:
         """
         try:
             project_name = project_name.replace(" ", "_")
-            project_path = os.path.join(self.workspace_dir, project_name)
+            project_path = self._resolve(project_name)
+            if project_path is None:
+                return f"Error: Invalid project name '{project_name}'."
 
             if os.path.exists(project_path):
                 return f"Error: Project '{project_name}' already exists."
@@ -41,12 +54,17 @@ class ProjectManager:
         Writes code code_content to projects/project_name/file_path.
         """
         try:
-            project_path = os.path.join(self.workspace_dir, project_name)
+            project_path = self._resolve(project_name)
+            if project_path is None:
+                return f"Error: Invalid project '{project_name}'."
             if not os.path.exists(project_path):
                 return f"Error: Project '{project_name}' does not exist."
-            
-            full_path = os.path.join(project_path, file_path)
-            
+
+            full_path = self._resolve(project_name, file_path)
+            if full_path is None:
+                return (f"Error: Refusing to write outside Jarvis_Projects "
+                        f"({file_path!r}).")
+
             # Ensure subdirectories exist if file_path is complex (e.g. utils/math.py)
             dir_name = os.path.dirname(full_path)
             if dir_name and not os.path.exists(dir_name):
@@ -91,10 +109,12 @@ class ProjectManager:
     def open_in_vscode(self, project_name):
         """Opens the project folder in VS Code."""
         try:
-            project_path = os.path.join(self.workspace_dir, project_name)
+            project_path = self._resolve(project_name)
+            if project_path is None:
+                return f"Error: Invalid project '{project_name}'."
             if not os.path.exists(project_path):
                 return f"Error: Project '{project_name}' does not exist."
-            
+
             # Determine VS Code Executable
             import shutil
             code_cmd = "code"
@@ -118,7 +138,9 @@ class ProjectManager:
         Includes basic safety checks.
         """
         try:
-            project_path = os.path.join(self.workspace_dir, project_name)
+            project_path = self._resolve(project_name)
+            if project_path is None:
+                return f"Error: Invalid project '{project_name}'."
             if not os.path.exists(project_path):
                 return f"Error: Project '{project_name}' does not exist."
 
@@ -212,16 +234,14 @@ h1 { color: #333; }"""
         """
         try:
             import shutil
-            project_path = os.path.join(self.workspace_dir, project_name)
-            if not os.path.exists(project_path):
+            project_path = self._resolve(project_name)
+            if project_path is None or not os.path.isdir(project_path):
                 return None
-            
-            # Output filename (without extension)
-            base_name = os.path.join(self.workspace_dir, project_name)
-            
-            # Create zip
+            # Archive lands in the workspace root, derived from a resolved
+            # path only (never a raw LLM-supplied name that could escape).
+            base_name = os.path.join(
+                os.path.abspath(self.workspace_dir), project_name)
             shutil.make_archive(base_name, 'zip', project_path)
-            
             return base_name + ".zip"
         except Exception as e:
             print(f"Zip Error: {e}")

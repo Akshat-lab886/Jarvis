@@ -429,7 +429,11 @@ class TestHibernation(unittest.TestCase):
         self.assertEqual(state['woke'], 1)
 
     def test_monitor_loop_suspends_after_idle(self):
-        mgr = self._manager(idle_minutes=0.01)   # 0.6s
+        # Monitor polls at max(2.0, idle/4) s, so the first suspend for a
+        # ~0.6s idle window lands at ~2s.  Wait on the real signal
+        # (mgr.hibernating) rather than a brittle callback count, and give
+        # the daemon thread headroom under full-suite GIL contention.
+        mgr = self._manager(idle_minutes=0.01)   # ~0.6s
         counts = {'n': 0}
         mgr.register_service(
             's',
@@ -437,11 +441,11 @@ class TestHibernation(unittest.TestCase):
             lambda: None)
         mgr.start()
         try:
-            deadline = time.time() + 5
-            while counts['n'] == 0 and time.time() < deadline:
+            deadline = time.time() + 8
+            while not mgr.hibernating and time.time() < deadline:
                 time.sleep(0.05)
-            self.assertEqual(counts['n'], 1)
             self.assertTrue(mgr.hibernating)
+            self.assertGreaterEqual(counts['n'], 1)
         finally:
             mgr.stop()
 

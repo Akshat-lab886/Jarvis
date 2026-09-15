@@ -47,3 +47,7 @@ config/mcp_servers.json
 episodic_memory.json
 jobs.json
 transcript.json
+
+# Guardrails live stores (personal facts — never commit)
+USER.md
+MEMORY.md

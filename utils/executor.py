@@ -22,6 +22,7 @@ from utils.meeting_audio import MeetingTranscriber
 from utils.complex_task import ComplexTaskManager, normalize_step_specs
 from utils.skills import SkillRegistry, SkillError
 from utils.tool_registry import ToolRegistry, ToolError
+from utils.audit import get_audit, DESTRUCTIVE_ACTIONS as _AUDIT_DESTRUCTIVE
 
 logger = logging.getLogger("Jarvis.Executor")
 
@@ -125,14 +126,90 @@ class JarvisExecutor:
         response_text = command.get('response', '')
 
         result_msg = ""
+        _t0 = time.time()
+        _audit = get_audit()
+
+        # --- Privacy gate: check trust level before execution ---
+        if action and hasattr(self, 'privacy') and self.privacy:
+            try:
+                trust_result = self.privacy.can_execute(action, command)
+                if isinstance(trust_result, tuple) and trust_result[0] == 'deny':
+                    reason = trust_result[1] if len(trust_result) > 1 else 'denied by privacy policy'
+                    result_msg = (f"⛔ Action '{action}' denied by privacy "
+                                  f"policy: {reason}")
+                    _audit.log(action, command, outcome='denied',
+                               detail=reason, duration_ms=0)
+                    if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                    self.mouth.speak(result_msg)
+                    return result_msg
+                elif isinstance(trust_result, tuple) and trust_result[0] == 'ask':
+                    # Route to approval manager for human confirmation
+                    approval_id = trust_result[1] if len(trust_result) > 1 else None
+                    approved, note = self.approvals.request(command)
+                    if not approved:
+                        result_msg = (f"⛔ Action '{action}' requires approval — {note}")
+                        _audit.log(action, command, outcome='denied',
+                                   detail=note, duration_ms=0)
+                        if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                        self.mouth.speak(result_msg)
+                        return result_msg
+            except Exception as e:
+                # Fail closed: deny + audit on any privacy gate error
+                result_msg = (f"⛔ Action '{action}' denied — privacy gate error")
+                _audit.log(action, command, outcome='denied',
+                           detail=f'privacy gate exception: {e}', duration_ms=0)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+                return result_msg
+
+        # --- Spending gate for financial actions ---
+        if action in ('agent_amazon', 'send_money', 'purchase',
+                       'book_flight', 'order_food', 'download_file'):
+            try:
+                amount = float(command.get('amount', 0) or 0)
+                if amount > 0 and hasattr(self, 'privacy') and self.privacy:
+                    ok, msg = self.privacy.check_spending(amount, action)
+                    if not ok:
+                        result_msg = (f"⛔ Spending blocked: {msg}")
+                        _audit.log(action, command, outcome='denied',
+                                   detail=msg, duration_ms=0)
+                        if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                        self.mouth.speak(result_msg)
+                        return result_msg
+            except Exception as e:
+                # Fail closed: deny on spending gate error
+                result_msg = (f"⛔ Spending gate error for '{action}'")
+                _audit.log(action, command, outcome='denied',
+                           detail=f'spending gate exception: {e}', duration_ms=0)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+                return result_msg
+
+        # --- Auto-snapshot before destructive file operations ---
+        if action in ('delete_file', 'delete_screenshot', 'clean_downloads',
+                       'dev_write', 'dev_command', 'dev_create'):
+            try:
+                from utils.checkpoints import get_checkpoints
+                cp = get_checkpoints()
+                if cp.enabled():
+                    cp.create(f"pre-{action}", [],
+                              note=f"auto-snapshot before {action}")
+            except Exception:
+                pass  # best-effort — don't block the action
 
         # Human-in-the-loop checkpoint: critical actions wait for a
         # deterministic human "yes" before executing (G3 guardrail).
-        if action and self.approvals.requires(action):
+        # The command may carry '_origin' (goals-watchdog / recurring /
+        # proactive) — trusted background origins self-approve the narrow
+        # AUTO_APPROVABLE set in critical mode; destructive actions and
+        # strict mode always hold.  See utils/approvals.py.
+        if action and self.approvals.requires(action, command):
             approved, note = self.approvals.request(command)
             if not approved:
                 result_msg = (f"⛔ Action '{action}' was cancelled — "
                               f"{note}.")
+                _audit.log(action, command, outcome='denied',
+                           detail=note, duration_ms=int((time.time()-_t0)*1000))
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
                 return result_msg
@@ -333,7 +410,7 @@ class JarvisExecutor:
                     result_msg = "Identity Verified: Admin Access Granted."
                     self.mouth.speak("Welcome back, Sir. Admin access granted.")
                 else:
-                    result_msg = "Identity not recognized, but Developer Override is active. Admin access granted."
+                    result_msg = "Identity not recognized. Admin access denied."
                     self.mouth.speak(result_msg)
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
             
@@ -645,6 +722,195 @@ class JarvisExecutor:
                 if not ok:
                     self.mouth.speak(result_msg)
 
+            # === HERMES PARITY: RUNTIMES, CHECKPOINTS, DIAGNOSTICS,
+            #     COMPUTER USE, SKILL FORGE, GUARDRAILS ================= #
+            elif action == 'sandbox_run':
+                # Multi-backend execution: local, docker, ssh, daytona,
+                # singularity, vercel, modal.
+                backend = command.get('backend', 'auto')
+                code = command.get('code')
+                cmd = command.get('command')
+                timeout = command.get('timeout', 60)
+                from utils import runtimes
+                if code:
+                    res = runtimes.run_code(code, backend=backend,
+                                            timeout=timeout)
+                elif cmd:
+                    res = runtimes.run_command(cmd, backend=backend,
+                                               timeout=timeout)
+                else:
+                    res = {'success': False, 'stderr':
+                           'sandbox_run needs code or command'}
+                status = 'OK' if res.get('success') else 'FAILED'
+                result_msg = (f"[{res.get('backend')}:{status}]\n"
+                              f"{res.get('stdout', '')}")
+                if res.get('stderr'):
+                    result_msg += f"\nstderr: {res['stderr'][:2000]}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'python_rpc':
+                # Persistent sandboxed Python session — namespace
+                # survives across calls.
+                from utils.python_rpc import get_rpc
+                if command.get('reset'):
+                    result_msg = get_rpc().reset()
+                elif command.get('code'):
+                    result_msg = get_rpc().format(
+                        command['code'],
+                        timeout=command.get('timeout', 30))
+                else:
+                    result_msg = get_rpc().stats().__repr__()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'checkpoint':
+                from utils.checkpoints import get_checkpoints
+                op = (command.get('op') or command.get('mode')
+                      or 'create').lower()
+                cp = get_checkpoints()
+                if op == 'list':
+                    result_msg = cp.list()
+                elif op == 'rollback':
+                    result_msg = cp.rollback(command.get('id')
+                                             or command.get('label')
+                                             or command.get('selector'))
+                elif op == 'drop':
+                    result_msg = cp.drop(command.get('id')
+                                         or command.get('selector') or '')
+                else:
+                    paths = command.get('paths')
+                    result_msg = cp.create(command.get('label') or 'manual',
+                                           paths=paths,
+                                           note=command.get('note', ''))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Checkpoint handled, Sir.")
+
+            elif action == 'computer_use':
+                from utils.computer_use import get_driver
+                driver = get_driver()
+                op = (command.get('op') or 'screenshot').lower()
+                if op == 'click':
+                    result_msg = driver.click(command.get('x', 0),
+                                              command.get('y', 0))
+                elif op == 'click_element':
+                    result_msg = driver.click_element(
+                        command.get('app', ''),
+                        command.get('element', command.get('name', '')),
+                        role=command.get('role'))
+                elif op == 'set_field':
+                    result_msg = driver.set_field(
+                        command.get('app', ''),
+                        command.get('field', command.get('name', '')),
+                        command.get('value', ''))
+                elif op in ('type', 'type_text'):
+                    result_msg = driver.type_text(command.get('text', ''))
+                elif op in ('key', 'press_key'):
+                    result_msg = driver.press_key(command.get('key', 'enter'))
+                elif op == 'scroll':
+                    result_msg = driver.scroll(command.get('amount', 3))
+                elif op == 'activate':
+                    result_msg = driver.activate(command.get('app', ''))
+                else:
+                    result_msg = driver.screenshot()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'read_skill':
+                # Progressive disclosure — load full skill instructions.
+                from utils.skill_forge import read_skill
+                result_msg = read_skill(command.get('name', ''))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'memory_about':
+                # Entity-graph recall: everything RLM memory holds about
+                # one person/project/topic (or the subject digest when
+                # no entity is named).
+                from utils.rlm import get_rlm
+                entity = command.get('entity') or command.get('name') \
+                    or command.get('query') or ''
+                if str(entity).strip():
+                    result_msg = get_rlm().recall_about(str(entity))
+                else:
+                    result_msg = get_rlm().entity_digest()
+                result_msg = str(result_msg or '').strip() or \
+                    "Nothing in long-term memory about that yet."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg[:200])
+
+            elif action == 'forge_skills':
+                # Trigger skill-forge analysis now (usually runs on its
+                # own maintenance timer).
+                from utils.skill_forge import get_forge
+                created = get_forge().analyze(brain)
+                patched = get_forge().improve(brain)
+                result_msg = (f"Skill forge: created {created} new "
+                              f"skill(s)."
+                              + (f" {patched}" if patched else ""))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Forge cycle complete, Sir.")
+
+            elif action == 'guardrails_update':
+                from utils.guardrails import get_guardrails
+                result_msg = get_guardrails().update(
+                    command.get('target', 'user'),
+                    command.get('section', 'Rules'),
+                    command.get('line', command.get('text', '')))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'diagnose_file':
+                from utils.lsp_diagnostics import check_and_render
+                result_msg = check_and_render(command.get('path', ''))
+                if not result_msg:
+                    result_msg = "No issues found."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'ask_moa':
+                # Mixture of Agents: N distinct providers, one merged
+                # answer.
+                from utils import moa
+                out = moa.format(brain, command.get('prompt')
+                                 or command.get('text')
+                                 or original_text or '')
+                if out is None:
+                    out = ("MoA unavailable — fewer than 2 providers "
+                           "configured; answering normally.")
+                    command2 = {'action': 'chat', 'response': ''}
+                    try:
+                        command2 = brain.think(
+                            command.get('prompt') or original_text or '')
+                    except Exception:
+                        pass
+                    out = str(command2.get('response', out))
+                result_msg = out
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+
+            elif action == 'hyperframe':
+                from utils import hyperframe
+                instructions = command.get('instructions') \
+                    or command.get('text') or original_text or ''
+                result_msg = hyperframe.list_mockups() \
+                    if command.get('list') else \
+                    hyperframe.create(brain, instructions)
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak("Mockup ready, Sir.")
+
+            elif action == 'browser_use':
+                from utils import browser_use
+                op = (command.get('op') or 'browse').lower()
+                if op == 'screenshot':
+                    result_msg = browser_use.screenshot(command.get('url'))
+                elif op in ('interact', 'click', 'type', 'key',
+                            'read_dom', 'google'):
+                    kwargs = {k: v for k, v in command.items()
+                              if k not in ('action', 'op')}
+                    result_msg = browser_use.interact(
+                        op if op != 'interact'
+                        else command.get('do', 'read_dom'), **kwargs)
+                else:
+                    result_msg = browser_use.browse(
+                        command.get('url', ''),
+                        mode=command.get('mode', 'auto'))
+                if ui_callback: ui_callback('ai_text', {'text': str(result_msg)[:3000]})
+
             elif action == 'run_skill':
                 name = command.get('name', '')
                 params = command.get('params') or {}
@@ -741,6 +1007,116 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            # === AUTONOMY: GOALS + BACKGROUND TASKS =================== #
+            elif action == 'goal_set':
+                from utils.goals import get_goals
+                g = get_goals().set(
+                    command.get('title') or original_text or '',
+                    deadline=str(command.get('deadline') or ''),
+                    priority=command.get('priority'))
+                if g:
+                    result_msg = (f"Goal [{g['id']}] tracked: {g['title']} "
+                                  f"— {g.get('deadline') or 'no deadline'}.")
+                else:
+                    result_msg = "Goals are disabled (JARVIS_GOALS=0)."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'goal_list':
+                from utils.goals import get_goals
+                result_msg = get_goals().render()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg[:220])
+
+            elif action in ('goal_done', 'goal_drop'):
+                from utils.goals import get_goals
+                store = get_goals()
+                ref = str(command.get('goal') or '').strip().lower()
+                matched = None
+                if ref:
+                    for g in store.list(include_done=False):
+                        if ref in g.get('id', '').lower() \
+                                or ref in g.get('title', '').lower():
+                            matched = g
+                            break
+                if matched is None:
+                    result_msg = (f"No open goal matches "
+                                  f"'{command.get('goal', '')}'.")
+                elif action == 'goal_done':
+                    store.complete(matched['id'])
+                    result_msg = f"Goal complete: {matched['title']}."
+                else:
+                    store.drop(matched['id'])
+                    result_msg = f"Goal dropped: {matched['title']}."
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'background_task':
+                from utils.complex_task import normalize_step_specs
+                task_text = command.get('task') or original_text or ''
+                mode, specs = normalize_step_specs(
+                    command.get('steps') or [task_text])
+                if not specs:
+                    specs = [{"id": 1, "text": task_text,
+                              "depends_on": []}]
+                self.task_manager.brain = brain
+                self.task_manager.ui_callback = ui_callback or (
+                    lambda e, d: None)
+                task_obj = self.task_manager.create_task(
+                    task_text, [s['text'] for s in specs])
+                goal_id = str(command.get('goal_id') or '').strip()
+                if goal_id:
+                    try:
+                        from utils.goals import get_goals
+                        get_goals().link_task(goal_id, task_obj.id)
+                    except Exception:
+                        pass
+                ok, msg = self.task_manager.start_task(task_obj.id)
+                result_msg = (msg + (f" Linked to goal {goal_id}."
+                                     if goal_id else ""))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                if not ok:
+                    self.mouth.speak(result_msg)
+
+            elif action == 'task_status':
+                task_id = str(command.get('task_id') or '').strip()
+                if task_id:
+                    t = self.task_manager.get_task(task_id)
+                    if t is None:
+                        for cand in self.task_manager.get_recent_tasks(
+                                limit=30):
+                            if cand.id.startswith(task_id):
+                                t = cand
+                                break
+                    if t is None:
+                        result_msg = f"No task '{task_id}'."
+                    else:
+                        st = t.status.value if hasattr(t.status, 'value') \
+                            else t.status
+                        lines = [f"Task {t.id}: {t.description}",
+                                 f"status: {st} ({t.progress_pct()}%)"]
+                        for s in t.steps:
+                            sst = s.status.value if hasattr(
+                                s.status, 'value') else s.status
+                            lines.append(f"  - [{sst}] {s.text[:80]}")
+                        result_msg = "\n".join(lines)
+                elif command.get('history'):
+                    hist = self.task_manager.get_history(limit=8)
+                    result_msg = ("No finished tasks yet." if not hist
+                                  else "Recent tasks:\n" + "\n".join(
+                                      f"- {t.id}: {t.description[:60]}"
+                                      for t in hist))
+                else:
+                    active = self.task_manager.get_active_tasks()
+                    result_msg = ("No active background tasks."
+                                  if not active
+                                  else "Active tasks:\n" + "\n".join(
+                                      f"- {t.id}: {t.description[:60]} "
+                                      f"({t.progress_pct()}%)"
+                                      for t in active))
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg[:220])
+
             elif action == 'dev_set_context':
                 project_name = command.get('project')
                 if project_name:
@@ -755,18 +1131,43 @@ class JarvisExecutor:
                 project_name = command.get('project') or self.active_project
                 file_path = command.get('file')
                 code_content = command.get('code')
-                
+
                 if not project_name:
                     result_msg = "No project specified and no active context. Which project?"
                 elif not file_path or not code_content:
                     result_msg = "Invalid parameters for Developer Write. File and Code are required."
                 else:
                     self.mouth.speak(f"Writing code to {file_path} in {project_name}.")
-                    
+
+                    # Auto-checkpoint the project before the edit, and
+                    # run diagnostics right after — if the write breaks
+                    # the file the agent sees it immediately (Hermes
+                    # parity: workspace checkpoints + LSP diagnostics).
+                    project_dir = os.path.join('Jarvis_Projects',
+                                               project_name)
+                    _diag_path = os.path.join(project_dir, file_path)
+                    try:
+                        from utils.checkpoints import get_checkpoints
+                        cp_note = get_checkpoints().before_edit(
+                            [_diag_path],
+                            note=f"before dev_write {file_path}")
+                        if cp_note and ui_callback:
+                            ui_callback('status', {'message': cp_note})
+                    except Exception:
+                        pass
+
                     from utils.dev_studio import ProjectManager
                     pm = ProjectManager()
                     result_msg = pm.write_to_file(project_name, file_path, code_content)
-                
+
+                    try:
+                        from utils.lsp_diagnostics import check_and_render
+                        diag = check_and_render(_diag_path)
+                        if diag:
+                            result_msg = f"{result_msg}\n\n{diag}"
+                    except Exception:
+                        pass
+
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
@@ -1286,7 +1687,24 @@ class JarvisExecutor:
 
         except Exception as e:
             logger.error(f"Executor Error: {e}", exc_info=True)
-            result_msg = f"System error during execution: {e}"            # Record the command for the daily-summary feature
+            result_msg = f"System error during execution: {e}"
+
+        # --- Audit trail: log every action with outcome + duration ---
+        _duration_ms = int((time.time() - _t0) * 1000)
+        _outcome = 'ok'
+        if 'cancelled' in (result_msg or '').lower() or 'denied' in (result_msg or '').lower():
+            _outcome = 'denied'
+        elif 'error' in (result_msg or '').lower() or 'failed' in (result_msg or '').lower():
+            _outcome = 'error'
+        try:
+            _audit.log(action, command, outcome=_outcome,
+                       duration_ms=_duration_ms,
+                       detail=(result_msg or '')[:200],
+                       origin=command.get('_origin', ''))
+        except Exception:
+            pass
+
+        # Record the command for the daily-summary feature
         if original_text:
             try:
                 self.history.log(original_text, action, result_msg or response_text)

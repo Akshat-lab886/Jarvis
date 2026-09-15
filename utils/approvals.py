@@ -11,8 +11,23 @@ Gated actions (CRITICAL_ACTIONS): outbound email, file deletion,
 process killing, developer shell/file operations, downloads cleanup.
 
 Policy (env):
-    JARVIS_APPROVALS      off | critical     (default critical)
+    JARVIS_APPROVALS      off | critical | strict   (default critical)
     APPROVAL_TIMEOUT_S    seconds to wait    (default 120)
+    DESTRUCTIVE_COOLDOWN_S  min seconds between destructive approvals (default 30)
+
+Modes:
+    off       — nothing gates (dangerous; background autonomy needs this
+                OFF only when you fully trust the loop)
+    critical  — destructive actions hold for a human "yes" (default).
+                Trusted-origin background work (goals watchdog, recurring
+                automations) may auto-approve LOW-RISK reads/writes
+                (see AUTO_APPROVABLE) but NEVER destructive ones.
+                Paired phones arrive as 'mobile:<device>' — an UNTRUSTED
+                origin that can never claim the trusted path, so a phone
+                can chat/read freely but destructive phone actions always
+                hold on the dashboard.
+    strict    — everything in CRITICAL_ACTIONS holds, no exceptions,
+                regardless of origin.  Use when you want full oversight.
 """
 
 import os
@@ -32,11 +47,81 @@ CRITICAL_ACTIONS = frozenset({
     'dev_command',
     'dev_write',
     'dev_create',
+    # Full autonomy still holds a human "yes" for: real-world effectors
+    # (apps/browser/media/desktop, smart home, code execution, skills,
+    # external tools, meetings, outgoing files) and irreversible memory
+    # loss (forget).  Everything NOT listed here is read-only or
+    # personal-organization and never gates — including the AUTO_APPROVABLE
+    # set below, which additionally documents the trusted-origin path.
+    'open_app', 'open_web', 'play_youtube', 'download_file',
+    'computer_use', 'browser_use', 'desktop_task',
+    'start_browser', 'agent_browse', 'agent_google', 'agent_amazon',
+    'smarthome', 'media_play_pause', 'set_volume', 'set_mode',
+    'capture_photo', 'analyze_photo',
+    'sandbox_run', 'python_rpc', 'write_code', 'dev_build_full',
+    'mobile_code', 'architect_app', 'auto_build_app',
+    'run_skill', 'save_skill', 'delete_skill', 'call_tool',
+    'forget_memory',
+    'send_file', 'reply_to_email',
+    'start_meeting', 'stop_meeting',
 })
 
 _SUMMARY_FIELDS = (
     'recipient', 'target', 'command', 'project', 'file', 'query', 'name'
 )
+
+# Actions a TRUSTED background origin (goals watchdog autostart,
+# recurring automations, proactive follow-ups) may self-approve WITHOUT
+# a human click.  Deliberately narrow: read-only queries, personal
+# organization (todos/notes/reminders/calendar reads + event creation),
+# memory writes, checkpoints, diagnostics, and non-destructive task
+# scaffolding (complex_task/background_task/goal_* only CREATE and START
+# tracked work — every step inside still passes through this same gate,
+# so a task can never smuggle a destructive action past a human).
+# Destructive actions (send_email, delete_*, kill_process,
+# dev_command/dev_write/dev_create, clean_downloads) are NEVER here —
+# they always hold for a human, even from trusted origins, even when
+# JARVIS_APPROVALS=critical.
+AUTO_APPROVABLE = frozenset({
+    'search_web', 'read_webpage', 'check_email', 'read_email',
+    'check_calendar', 'add_event', 'morning_briefing', 'news_headlines',
+    'daily_summary', 'triage', 'schedule_insights',
+    'todo_add', 'todo_done', 'todo_remove', 'todo_list', 'todo_clear',
+    'note_save', 'note_list', 'note_remove',
+    'set_reminder', 'list_reminders', 'cancel_reminder',
+    'schedule_automation', 'list_automations',
+    'recall', 'remember', 'save_memory', 'get_memory', 'memory_stats',
+    'consult_archive', 'memory_about',
+    'system_info', 'get_battery', 'get_weather', 'get_stock',
+    'checkpoint', 'diagnose_file', 'list_skills', 'read_skill',
+    'complex_task', 'background_task', 'task_status',
+    'goal_set', 'goal_list', 'goal_done', 'goal_drop',
+    'chat',
+})
+
+# Origin markers a command may carry (command['_origin']) to claim the
+# trusted-background path.  Anything else → untrusted → full gating.
+TRUSTED_ORIGINS = frozenset({
+    'goals-watchdog', 'recurring', 'proactive',
+})
+
+# Destructive actions — NEVER auto-approvable, always require human
+# confirmation regardless of mode or origin.  Subset of CRITICAL_ACTIONS.
+DESTRUCTIVE_ACTIONS = frozenset({
+    'delete_file', 'delete_screenshot', 'clean_downloads',
+    'kill_process', 'lock_system',
+    'send_email', 'reply_to_email', 'send_file',
+    'forget_memory',
+    'dev_command', 'dev_write', 'dev_create', 'dev_build_full',
+    'sandbox_run', 'python_rpc', 'write_code',
+    'computer_use', 'browser_use', 'desktop_task',
+    'agent_browse', 'agent_google', 'agent_amazon',
+    'smarthome', 'start_browser',
+    'run_skill', 'save_skill', 'delete_skill', 'call_tool',
+    'mobile_code', 'architect_app', 'auto_build_app',
+    'start_meeting', 'stop_meeting',
+    'capture_photo', 'analyze_photo',
+})
 
 
 def _summarize(command):
@@ -60,14 +145,48 @@ class ApprovalManager:
         self.emit_fn = emit_fn          # fn(event, payload) -> None
         self._pending = {}              # id -> state dict
         self._lock = threading.Lock()
+        self._last_destructive = 0.0    # timestamp of last destructive approval
+        try:
+            self._destructive_cooldown = max(
+                5, int(os.getenv('DESTRUCTIVE_COOLDOWN_S', '30') or 30))
+        except (TypeError, ValueError):
+            self._destructive_cooldown = 30
 
     # ------------------------------------------------------------------ #
     @staticmethod
     def enabled():
         return os.getenv('JARVIS_APPROVALS', 'critical').lower() != 'off'
 
-    def requires(self, action):
-        return self.enabled() and action in CRITICAL_ACTIONS
+    def requires(self, action, command=None):
+        """
+        True when *action* must hold for a human "yes".
+
+        Trusted-origin background work (command['_origin'] in
+        TRUSTED_ORIGINS) self-approves AUTO_APPROVABLE actions — but
+        only in 'critical' mode.  'strict' mode gates everything;
+        destructive actions always gate regardless of origin.
+        """
+        if not self.enabled():
+            return False
+        if action not in CRITICAL_ACTIONS:
+            return False
+        # Destructive actions ALWAYS require human approval
+        if action in DESTRUCTIVE_ACTIONS:
+            return True
+        try:
+            mode = os.getenv('JARVIS_APPROVALS', 'critical').lower()
+            if mode == 'strict':
+                return True
+            origin = ''
+            if isinstance(command, dict):
+                origin = str(command.get('_origin', '') or '').lower()
+            if origin in TRUSTED_ORIGINS:
+                logger.info(f"AUTO-APPROVED [{action}] from trusted "
+                            f"origin '{origin}' (critical mode)")
+                return False
+        except Exception:
+            pass
+        return True
 
     # ------------------------------------------------------------------ #
     def request(self, command):
@@ -78,8 +197,19 @@ class ApprovalManager:
         Non-critical mode or unknown action → (True, '').
         """
         action = str(command.get('action', ''))
-        if not self.requires(action):
+        if not self.requires(action, command):
             return True, ''
+
+        # Destructive cooldown — don't stack rapid-fire destructive requests
+        if action in DESTRUCTIVE_ACTIONS:
+            now = time.time()
+            elapsed = now - self._last_destructive
+            remaining = self._destructive_cooldown - elapsed
+            if remaining > 0:
+                logger.warning(
+                    f"DESTRUCTIVE COOLDOWN: {action} waiting "
+                    f"{remaining:.0f}s since last destructive approval")
+                time.sleep(remaining)
 
         approval_id = uuid.uuid4().hex[:10]
         summary = _summarize(command)
@@ -107,6 +237,7 @@ class ApprovalManager:
                     'action': action,
                     'summary': summary,
                     'timeout': self.timeout,
+                    'destructive': action in DESTRUCTIVE_ACTIONS,
                 })
             except Exception as e:
                 logger.warning(f"approval emit failed: {e}")
@@ -121,6 +252,8 @@ class ApprovalManager:
             return False, "timed out waiting for approval"
         if state['decision'] is True:
             logger.info(f"APPROVED ✓ {summary}")
+            if action in DESTRUCTIVE_ACTIONS:
+                self._last_destructive = time.time()
             return True, ''
         logger.info(f"DENIED ✗ {summary}")
         return False, "denied by operator"

@@ -58,6 +58,10 @@ class JarvisTeleBot:
         self.application = None
         self.logger = logging.getLogger("Jarvis.Telegram")
         self._notify_chat_id = None
+        # Event loop the polling runs on (captured in run_bot).  PTB v20's
+        # bot.* methods are coroutines; reminder sends originate on the
+        # scheduler thread, so they hop here thread-safely.
+        self._bot_loop = None
         self.logger.info("Initializing Telegram Bot")
 
     # ------------------------------------------------------------------ #
@@ -239,10 +243,38 @@ class JarvisTeleBot:
             return
         try:
             text = f"⏰ Reminder: {reminder['text']}"
-            self.application.bot.send_message(chat_id=chat_id, text=text)
+            # bot.send_message is a coroutine in PTB v20; from this
+            # non-async scheduler thread it must be awaited on the polling
+            # loop or the message is silently dropped.
+            self._send(self.application.bot.send_message(
+                chat_id=chat_id, text=text))
             self.logger.info(f"Reminder notification sent to {chat_id}")
         except Exception as e:
             self.logger.error(f"Reminder notify failed: {e}")
+
+    def _send(self, coro, timeout=30):
+        """Run one async bot call from a non-async thread.
+
+        Returns True when the call completed; logs and returns False on
+        failure.  Uses the polling loop (captured in run_bot) when it is
+        live — the bot's httpx client is bound to that loop — and only
+        falls back to a private loop when no polling loop is reachable.
+        """
+        loop = self._bot_loop
+        if loop is not None and loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                future.result(timeout=timeout)
+                return True
+            except Exception as e:
+                self.logger.error(f"Bot async call failed: {e}")
+                return False
+        try:
+            asyncio.run(coro)
+            return True
+        except Exception as e:
+            self.logger.error(f"Bot async call failed: {e}")
+            return False
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -251,8 +283,6 @@ class JarvisTeleBot:
         """Runs the bot polling logic in the current thread (blocking)."""
         try:
             self.logger.info("Starting bot event loop")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
 
             self.application = ApplicationBuilder().token(self.token).build()
 
@@ -273,7 +303,18 @@ class JarvisTeleBot:
                 self.handle_photo))
 
             self.logger.info("Telegram Bot polling starting...")
-            self.application.run_polling(stop_signals=False)
+            # Drive polling on a loop we retain, so the reminder scheduler
+            # can hop onto it (see _send).  Older PTB without the
+            # custom_run_coroutine hook falls back to run_polling's own loop.
+            try:
+                self._bot_loop = asyncio.new_event_loop()
+                self.application.run_polling(
+                    stop_signals=False,
+                    custom_run_coroutine=lambda coro:
+                        self._bot_loop.run_until_complete(coro))
+            except TypeError:
+                self._bot_loop = None
+                self.application.run_polling(stop_signals=False)
         except Exception as e:
             self.logger.error(f"Error in Telegram bot: {e}")
 

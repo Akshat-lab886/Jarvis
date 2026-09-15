@@ -430,7 +430,8 @@ class ProactiveEngine:
     - Proactive suggestions
     """
 
-    def __init__(self, secretary=None, episodic_memory=None, interval=900):
+    def __init__(self, secretary=None, episodic_memory=None, interval=900,
+                 notifier=None):
         self.time_blocker = TimeBlockScheduler(secretary, episodic_memory)
         self.triage = CrossAppTriage(secretary, episodic_memory)
         self.memory = episodic_memory
@@ -438,6 +439,15 @@ class ProactiveEngine:
         self.interval = interval
         self._running = False
         self._thread = None
+        self._notifier = notifier
+        # Dedup: announce each finding signature once per day so a
+        # standing clash doesn't page the user every 15 minutes.
+        self._announced = {}   # signature -> date string
+        try:
+            self._narrate = os.getenv('JARVIS_PROACTIVE_NARRATE',
+                                      '0') == '1'
+        except Exception:
+            self._narrate = False
 
     def start(self):
         if self._running:
@@ -459,8 +469,15 @@ class ProactiveEngine:
                 logger.error(f"ProactiveEngine scan error: {e}")
             time.sleep(self.interval)
 
-    def scan(self):
-        """Run a full proactive scan."""
+    def scan(self, narrate=None):
+        """
+        Run a full proactive scan.  When narrate is on (constructor
+        opt-in via JARVIS_PROACTIVE_NARRATE=1, or True passed here),
+        NEW high-signal findings are announced through the notifier
+        (dashboard always; voice/Telegram per its config), deduped to
+        one announcement per finding per day.  Returns the results
+        dict unchanged.  Never raises.
+        """
         results = {
             'time_blocks': self.time_blocker.scan_and_adjust(),
             'triage': self.triage.triage_emails(),
@@ -474,7 +491,59 @@ class ProactiveEngine:
         except ImportError:
             pass
 
+        try:
+            want_voice = self._narrate if narrate is None else bool(narrate)
+            if want_voice:
+                self._narrate_findings(results)
+        except Exception as e:
+            logger.debug("proactive narration skipped: %s", e)
         return results
+
+    def _narrate_findings(self, results):
+        """Announce new high-signal findings once per day each."""
+        try:
+            from utils.notify import get_notifier
+            nb = self._notifier or get_notifier()
+        except Exception:
+            return
+        import datetime as _dt
+        today = _dt.datetime.now().strftime('%Y-%m-%d')
+        # Expire yesterday's signatures (bounded dict).
+        for sig in [s for s, day in self._announced.items()
+                    if day != today]:
+            self._announced.pop(sig, None)
+
+        def _once(signature, text, priority):
+            import hashlib
+            sig = hashlib.md5(signature.encode()).hexdigest()[:16]
+            if self._announced.get(sig) == today:
+                return
+            try:
+                if nb.announce(text, priority=priority):
+                    self._announced[sig] = today
+            except Exception:
+                pass
+
+        try:
+            for b in (results.get('time_blocks') or [])[:6]:
+                sev = str(b.get('severity', '')).lower()
+                if sev in ('high', 'warning'):
+                    _once(f"tb:{b.get('type')}:{b.get('message', '')[:80]}",
+                          f"📅 {b.get('message', '')[:220]}",
+                          'high' if sev == 'high' else 'normal')
+        except Exception:
+            pass
+        try:
+            urgent = [e for e in (results.get('triage') or [])
+                      if isinstance(e, dict)
+                      and int(e.get('priority', 0)) >= 9][:3]
+            for e in urgent:
+                _once(f"mail:{e.get('id', e.get('subject', ''))}",
+                      f"📬 Urgent from {e.get('sender', '?')}: "
+                      f"{e.get('subject', '')[:100]}",
+                      'high')
+        except Exception:
+            pass
 
     def get_morning_briefing_context(self):
         """

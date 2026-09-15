@@ -35,16 +35,32 @@ class Tools:
                 search_name = aliases.get(app_name.lower(), app_name)
                 print(f"Direct open failed. Searching for '{search_name}'...")
 
-                # 3. Spotlight Search (Filename)
-                cmd = f"mdfind \"kMDItemKind == 'Application' && kMDItemFSName == '*{search_name}*.app'\" | head -n 1"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                app_path = result.stdout.strip()
+                # Spotlight queries run as argv, never through a shell: the
+                # search name comes from the LLM, and interpolating it into
+                # ``sh -c`` would make ``foo; rm -rf ~`` executable.  A
+                # missing mdfind degrades to empty, same as the old pipe.
+                def _mdfind(query):
+                    try:
+                        return (subprocess.run(["mdfind", query],
+                                               capture_output=True,
+                                               text=True).stdout or '')
+                    except Exception:
+                        return ''
 
-                # 4. Fallback: Content match
+                # 3. Spotlight Search (Filename) — first hit only
+                mdfind_out = _mdfind(
+                    f"kMDItemKind == 'Application' && "
+                    f"kMDItemFSName == '*{search_name}*.app'")
+                app_path = (mdfind_out.strip().splitlines() or [''])[0]
+
+                # 4. Fallback: Content match (case-insensitive, first hit)
                 if not app_path:
-                     cmd = f"mdfind \"kMDItemKind == 'Application'\" | grep -i \"{search_name}\" | head -n 1"
-                     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                     app_path = result.stdout.strip()
+                    all_apps = _mdfind(
+                        "kMDItemKind == 'Application'").splitlines()
+                    needle = search_name.lower()
+                    app_path = next(
+                        (ln.strip() for ln in all_apps
+                         if needle in ln.lower()), '')
 
                 # 5. Last Resort: Manual Directory Scan (Fuzzy)
                 if not app_path:
@@ -115,8 +131,8 @@ class Tools:
             # level is 0-100
             level = max(0, min(100, int(level)))
             if self.os_name == 'Darwin':
-                cmd = f"osascript -e 'set volume output volume {level}'"
-                subprocess.run(cmd, shell=True, check=True)
+                subprocess.run(["osascript", "-e", f"set volume output volume {level}"],
+                               check=True, timeout=5)
                 return True
         except subprocess.CalledProcessError as e:
             print(f"Error setting volume (Permission?): {e}")
@@ -129,15 +145,17 @@ class Tools:
         try:
             if self.os_name == 'Darwin':
                 print("Attempting Media Key...")
-                cmd = "osascript -e 'tell application \"System Events\" to key code 100'"
-                subprocess.run(cmd, shell=True)
-                
+                subprocess.run(["osascript", "-e",
+                               'tell application "System Events" to key code 100'],
+                               timeout=5)
+
                 # FALLBACK: Explicitly pause YouTube in Browsers via JavaScript
                 browsers = ['Google Chrome', 'Safari', 'Brave Browser', 'Microsoft Edge']
                 for browser in browsers:
                     try:
-                        # Check if browser is running
-                        check = subprocess.run(f"pgrep -f '{browser}'", shell=True, stdout=subprocess.DEVNULL)
+                        # Check if browser is running (use list-form, no shell)
+                        check = subprocess.run(["pgrep", "-f", browser],
+                                               stdout=subprocess.DEVNULL, timeout=3)
                         if check.returncode == 0:
                             print(f"Sending pause command to {browser}...")
                             js = "document.querySelectorAll('video').forEach(v => v.pause())"
@@ -145,13 +163,13 @@ class Tools:
                                 script = f'tell application "{browser}" to do JavaScript "{js}" in document 1'
                             else: # Chrome/Edge/Brave
                                 script = f'tell application "{browser}" to execute front window\'s active tab javascript "{js}"'
-                                
-                            subprocess.run(["osascript", "-e", script], stderr=subprocess.DEVNULL)
-                            
+
+                            subprocess.run(["osascript", "-e", script], stderr=subprocess.DEVNULL, timeout=5)
+
                             # Aggressive Fallback: Focus and Press 'K' (YouTube Shortcut)
-                            # This simulates user interaction if Apple Event JS failed
-                            cmd_focus = f"osascript -e 'tell application \"{browser}\" to activate'"
-                            subprocess.run(cmd_focus, shell=True)
+                            subprocess.run(["osascript", "-e",
+                                           f'tell application "{browser}" to activate'],
+                                           timeout=5)
                             
                             import time
                             time.sleep(0.2)
@@ -619,20 +637,17 @@ class Tools:
         print("Initiating LOCKDOWN PROTOCOL")
         try:
             if self.os_name == 'Darwin':
-                # macOS Lock Screen - Modern Approach
-                
                 # Method 1: Simulate Cmd+Ctrl+Q (Native Lock Shortcut)
                 try:
-                    cmd_key = "osascript -e 'tell application \"System Events\" to keystroke \"q\" using {command down, control down}'"
-                    subprocess.run(cmd_key, shell=True)
+                    subprocess.run(["osascript", "-e",
+                                   'tell application "System Events" to keystroke "q" using {command down, control down}'],
+                                   timeout=5)
                 except:
                     pass
-                
-                # Method 2: Apple Event to loginwindow (Reliable)
-                cmd_login = "osascript -e 'tell application \"System Events\" to sleep'" # Sleep is safer fallback if lock fails, but let's try specific lock
-                # Actually, plain sleep is good. But let's try the specific PMSET command which locks display immediately.
-                subprocess.run("pmset displaysleepnow", shell=True)
-                
+
+                # Method 2: PMSET locks display immediately
+                subprocess.run(["pmset", "displaysleepnow"], timeout=5)
+
                 return "System locked."
             elif self.os_name == 'Windows':
                 import ctypes
@@ -640,7 +655,7 @@ class Tools:
                 return "System locked."
             else:
                 # Linux (Try common ones)
-                subprocess.run("xdg-screensaver lock", shell=True)
+                subprocess.run(["xdg-screensaver", "lock"], timeout=5)
                 return "Lock command sent."
         except Exception as e:
             print(f"Lock error: {e}")

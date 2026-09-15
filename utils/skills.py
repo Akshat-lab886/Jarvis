@@ -218,7 +218,10 @@ class SkillRegistry:
             from utils.coder import Coder
             coder = Coder()
 
+        import time as _time
+        _t0 = _time.time()
         result = coder.execute_with_retry(code, timeout=timeout)
+        _ms = int((_time.time() - _t0) * 1000)
 
         # Usage tracking (learning-loop telemetry)
         try:
@@ -228,6 +231,16 @@ class SkillRegistry:
             skill["last_success"] = bool(result.get('success'))
             with open(self._path_for(name), 'w') as f:
                 json.dump(skill, f, indent=2)
+        except Exception:
+            pass
+
+        # Skill-forge runtime scoring: failure streaks trigger
+        # self-patching, timings flag slow skills for optimization.
+        try:
+            from utils.skill_forge import get_forge
+            get_forge().note_run(
+                skill.get('name') or name,
+                bool(result.get('success')), duration_ms=_ms)
         except Exception:
             pass
 

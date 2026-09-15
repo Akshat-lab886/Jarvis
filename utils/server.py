@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from flask_socketio import SocketIO
 from config import Config
 import os
@@ -9,8 +9,30 @@ import time
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.config.from_object(Config)
-# Force threading mode to avoid Eventlet conflicts with Pygame/Asyncio
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Force threading mode to avoid Eventlet conflicts with Pygame/Asyncio.
+# CORS is restricted to the app's own origin(s) by default so a page from
+# any other website cannot cross-site-WebSocket-hijack the control plane
+# (every socket handler below can drive the executor with host-user
+# privileges, and connect-time pushes personal data).  Widen deliberately
+# with JARVIS_ALLOWED_ORIGINS=http://host:5001,http://host:5001 when a
+# phone/other origin is an intended client.
+_CFG_ORIGINS = os.getenv('JARVIS_ALLOWED_ORIGINS', '').strip()
+if _CFG_ORIGINS:
+    _ALLOWED_ORIGINS = [o.strip() for o in _CFG_ORIGINS.split(',')
+                        if o.strip()]
+else:
+    _port = getattr(Config, 'PORT', 5001)
+    _ALLOWED_ORIGINS = [f"http://127.0.0.1:{_port}",
+                        f"http://localhost:{_port}",
+                        f"https://127.0.0.1:{_port}",
+                        f"https://localhost:{_port}"]
+socketio = SocketIO(app, cors_allowed_origins=_ALLOWED_ORIGINS,
+                    async_mode='threading')
+
+# Serializes the host-mute read/modify/restore across silent (remote)
+# events so the shared mouth.suppress flag is never left stuck True or
+# reset early by an overlapping event (see _event_pipeline).
+_MUTE_LOCK = threading.RLock()
 
 print("DEBUG: Registered Routes:")
 print(app.url_map)
@@ -55,18 +77,40 @@ def _warm_librarian():
 threading.Thread(target=_warm_librarian, daemon=True,
                   name="librarian-warmup").start()
 
+def _has_socket_clients():
+    """True if any SocketIO client is currently connected."""
+    try:
+        mgr = getattr(socketio, 'server', None)
+        if mgr is None:
+            return True  # unknown — emit rather than go silent
+        rooms = getattr(mgr, 'manager', None)
+        if rooms is not None:
+            rooms = getattr(rooms, 'rooms', None)
+        if isinstance(rooms, dict):
+            for ns_rooms in rooms.values():
+                if isinstance(ns_rooms, dict):
+                    for room, members in ns_rooms.items():
+                        if room is None and members:
+                            return True
+            return False
+        return True
+    except Exception:
+        return True  # fail open for telemetry, not for actions
+
 def emit_system_vitals():
-    """Background thread that emits system vitals every 2 seconds."""
+    """Background thread: emit vitals only when a client is connected."""
     global vitals_running
     vitals_running = True
-    
+    from utils.logger import logger
+
     while vitals_running:
         try:
-            vitals = executor.tools.get_system_vitals()
-            socketio.emit('system_vitals', vitals)
+            if _has_socket_clients():
+                vitals = executor.tools.get_system_vitals()
+                socketio.emit('system_vitals', vitals)
         except Exception as e:
-            print(f"Vitals emission error: {e}")
-        time.sleep(2)
+            logger.debug("Vitals emission skipped: %s", e)
+        time.sleep(5)
 
 def start_vitals_thread():
     """Start the background vitals monitoring thread."""
@@ -122,18 +166,152 @@ def start_server():
     if tele_bot is not None:
         executor.scheduler.on_fire = tele_bot.notify_reminder
 
+    # Proactive notifier → Telegram push for HIGH-priority findings
+    # (goal escalations, urgent proactive items).  The notifier itself
+    # gates on JARVIS_NOTIFY_TELEGRAM=1; the hook below is a silent
+    # no-op when the bot is down or has no chat id yet.
+    if tele_bot is not None:
+        try:
+            from utils.notify import register_telegram_hook
+            _bot = tele_bot
+
+            def _push_proactive(text):
+                try:
+                    import asyncio
+                    coro = _bot.application.bot.send_message(
+                        chat_id=(_bot._notify_chat_id
+                                 or (Config.TELEGRAM_ALLOWED_IDS[0]
+                                     if Config.TELEGRAM_ALLOWED_IDS
+                                     else None)),
+                        text=str(text)[:1000])
+                    _bot._send(coro)
+                except Exception as e:
+                    print(f"Proactive Telegram push skipped: {e}")
+            register_telegram_hook(_push_proactive)
+        except Exception as e:
+            print(f"Proactive Telegram hook skipped: {e}")
+
     # Recurring automations (cron-style jobs) — persist across restarts
     # and execute real Jarvis actions through the brain + executor.
+    # Trusted origin: AUTO_APPROVABLE actions self-approve in critical
+    # mode; destructive ones still hold for a human (see approvals.py).
     def _run_automation(job):
         action_text = job.get('action', '')
         command = brain.think(action_text)
-        return executor.execute_command(
+        if isinstance(command, dict):
+            command['_origin'] = 'recurring'
+        # Chained follow-ups (full autonomy): a finished automation may
+        # queue ONE follow-up task for itself via the brain's verdict
+        # line, so "check X, and if bad, do Y" works.  The flag lives on
+        # the JOB (not the brain's command dict) because _fire passes a
+        # copy of the job to this callback — _maybe_followup reads the
+        # same job object it was given at fire time.
+        try:
+            from utils.goals import enabled as _goals_on
+            if _goals_on():
+                job['_allow_followup'] = True
+        except Exception:
+            pass
+        result = executor.execute_command(
             command, brain, original_text=action_text,
             ui_callback=send_to_ui)
+        try:
+            from utils.notify import get_notifier
+            get_notifier().announce(
+                f"🤖 Automation ran: {action_text[:80]}",
+                priority='low')
+        except Exception:
+            pass
+        return result
     executor.recurring.mouth = executor.mouth
     executor.recurring.on_fire = _run_automation
     if executor.recurring.count() > 0:
         executor.recurring.start()
+
+    # Goal engine watchdog — deadline escalation + auto-completion +
+    # opt-in autostart of planned tasks (JARVIS_GOALS_* in .env).
+    try:
+        from utils.goals import start_watchdog
+        from utils.notify import get_notifier
+        start_watchdog(brain=brain, notifier=get_notifier())
+    except Exception as e:
+        print(f"Goals watchdog skipped: {e}")
+
+    # Interrupted-task recovery: tasks parked as PAUSED by a restart
+    # auto-resume in the background (full autonomy) instead of waiting
+    # for a manual resume click.  Bounded: at most 2 resume, newest
+    # first, only when the fleet is actually up, and NEVER while the
+    # circuit breaker reports tripped (no LLM = the resumed task would
+    # instantly fail every brain.complete step and burn cooldowns).
+    try:
+        from utils.circuit_breaker import get_breaker
+        _fleet_ok = get_breaker().allow_llm_spend()
+    except Exception:
+        _fleet_ok = True   # breaker itself broken → don't block recovery
+    if _fleet_ok:
+        try:
+            _paused = [t for t in executor.task_manager.get_active_tasks()
+                       if str(getattr(t.status, 'value', t.status))
+                       == 'paused']
+            if _paused:
+                _paused.sort(key=lambda t: t.created_at or '',
+                             reverse=True)
+                _resumed = 0
+                for _t in _paused[:2]:
+                    try:
+                        ok, _msg = executor.task_manager.start_task(_t.id)
+                        if ok:
+                            _resumed += 1
+                            print(f"Autonomy: resumed interrupted task "
+                                  f"{_t.id} ({_t.description[:50]})")
+                    except Exception as e:
+                        print(f"Autonomy: resume of task {_t.id} "
+                              f"failed: {e}")
+                if _resumed:
+                    try:
+                        from utils.notify import get_notifier
+                        get_notifier().announce(
+                            f"🔄 Resumed {_resumed} interrupted background "
+                            f"task(s) after restart.", priority='low')
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Autonomy: interrupted-task scan skipped: {e}")
+    else:
+        print("Autonomy: fleet down (breaker tripped) — interrupted "
+              "tasks stay parked for manual resume.")
+
+    # Omnichannel gateway hub (Discord polling + Slack webhook/route).
+    # Telegram is started above; every adapter activates per its env
+    # config and funnels through the same event-bus pipeline.
+    try:
+        from utils.gateways import get_hub
+        get_hub().start(brain)
+    except Exception as e:
+        print(f"Gateway hub init skipped: {e}")
+
+    # Skill forge maintenance loop — distills skills from successful
+    # workflows and patches failing ones (background, bounded).
+    try:
+        from utils.skill_forge import get_forge
+        get_forge().start(brain)
+    except Exception as e:
+        print(f"Skill forge start skipped: {e}")
+
+    # Proactive engine — background schedule-clash + urgent-mail
+    # narration (dashboard always; voice/Telegram per notifier config,
+    # deduped daily).  Opt-in via JARVIS_PROACTIVE_NARRATE=1; the scan
+    # itself is read-only, announcements go through the rate-limited
+    # notifier, and JARVIS_NOTIFY=0 silences everything.
+    try:
+        from utils.proactive import ProactiveEngine
+        from utils.notify import get_notifier
+        _proactive = ProactiveEngine(
+            secretary=getattr(executor.tools, 'secretary', None),
+            notifier=get_notifier())
+        _proactive.start()
+    except Exception as e:
+        print(f"Proactive engine start skipped: {e}")
 
     # Human-in-the-loop approvals: route hold requests to the dashboard
     executor.approvals.emit_fn = lambda event, payload: socketio.emit(
@@ -160,30 +338,69 @@ def start_server():
     bus = get_bus()
 
     def _event_pipeline(event):
-        """think→execute pipeline shared by dashboard/telegram/webhook."""
+        """think→execute pipeline shared by dashboard/telegram/webhook/mobile."""
         text = event.text
+        is_mobile = (event.source == 'mobile')
 
-        from utils.quick_actions import handle_quick_actions
-        if handle_quick_actions(text, executor, brain,
-                                ui_callback=send_to_ui):
-            return "Quick action executed."
+        # Mobile skips keyword quick-actions: they execute side effects
+        # (missions, app builds) without passing the approvals gate.
+        # The brain→executor path below always gates destructive actions.
+        if not is_mobile:
+            from utils.quick_actions import handle_quick_actions
+            if handle_quick_actions(text, executor, brain,
+                                    ui_callback=send_to_ui):
+                return "Quick action executed."
 
         image_path = None
         if event.kind == 'photo':
             image_path = event.meta.get('image_path')
 
-        silent = (event.source == 'telegram'
+        # Mobile (paired phone) is remote + untrusted like Telegram:
+        # host stays silent.  The think→execute result is additionally
+        # stamped _origin='mobile:<device>' — an origin OUTSIDE
+        # TRUSTED_ORIGINS — so the approvals gate holds destructive
+        # actions for a human on the dashboard (never a HITL bypass).
+        silent = (event.source == 'telegram' or is_mobile
                   or bool(event.meta.get('silent_host')))
-        try:
-            if silent:
-                executor.mouth.suppress = True
-            command = brain.think(text, image_path=image_path)
-            return executor.execute_command(
-                command, brain, original_text=text,
-                ui_callback=send_to_ui)
-        finally:
-            if silent:
-                executor.mouth.suppress = False
+
+        def _stamp(command):
+            if is_mobile and isinstance(command, dict):
+                try:
+                    dev = str(event.meta.get('device_id', '') or '')
+                    command['_origin'] = f"mobile:{dev}" if dev \
+                        else 'mobile'
+                except Exception:
+                    pass
+            return command
+
+        if silent:
+            # Mute the host speakers for the whole remote/silent event.
+            # Save/restore the PRIOR flag value under one mute lock: a
+            # naive set-True/`finally: set-False` lets two overlapping
+            # silent events (or a concurrent agent-loop tool call) leave
+            # mouth.suppress stuck True (Jarvis muted for the process
+            # lifetime) or reset it while the other is still executing
+            # (the host speaks aloud mid-silent).
+            with _MUTE_LOCK:
+                mouth = getattr(executor, 'mouth', None)
+                can_suppress = mouth is not None and \
+                    hasattr(mouth, 'suppress')
+                was = getattr(mouth, 'suppress', False)
+                try:
+                    if can_suppress:
+                        mouth.suppress = True
+                    command = _stamp(brain.think(text,
+                                                 image_path=image_path))
+                    return executor.execute_command(
+                        command, brain, original_text=text,
+                        ui_callback=send_to_ui)
+                finally:
+                    if can_suppress:
+                        mouth.suppress = was
+        command = _stamp(brain.think(text, image_path=image_path))
+        return executor.execute_command(
+            command, brain, original_text=text,
+            ui_callback=send_to_ui)
 
     bus.handler = _event_pipeline
 
@@ -195,6 +412,16 @@ def start_server():
     except Exception as e:
         print(f"Hibernation init skipped: {e}")
 
+    # RLM (recursive memory) maintenance daemon: periodic 'sleep' passes
+    # that fold events into summaries/abstractions and refresh the world
+    # model.  Observation-driven threads handle busy periods; this loop
+    # is the idle-time backstop.  JARVIS_RLM=0 disables everything.
+    try:
+        from utils.rlm import get_rlm
+        get_rlm().start_maintenance(brain)
+    except Exception as e:
+        print(f"RLM maintenance skipped: {e}")
+
     greetings = ["Online and ready, Sir.", "Systems operational.", "Good to see you again, Sir.", "I am Jarvis, at your service."]
     try:
         greeting = random.choice(greetings)
@@ -204,7 +431,45 @@ def start_server():
         
     # Disable reloader to prevent double initialization of threads/bot
     ssl_ctx = _get_ssl_context()
-    socketio.run(app, host='0.0.0.0', port=Config.PORT, allow_unsafe_werkzeug=True,
+    # Bind loopback by default (no LAN exposure of the unauthenticated
+    # control plane); set JARVIS_HOST=0.0.0.0 to serve other devices.
+    _bind_host = os.getenv('JARVIS_HOST', '127.0.0.1')
+
+    # Graceful port fallback: if the configured port is already taken
+    # (e.g. another app squatting on 5001), walk upward to the next free
+    # port instead of crashing with "Address already in use".
+    import socket as _socket
+    def _port_free(port):
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        try:
+            s.bind((_bind_host if _bind_host != '0.0.0.0' else '127.0.0.1', port))
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
+    _port = Config.PORT
+    if not _port_free(_port):
+        print(f"⚠ Port {_port} in use — searching for a free port…")
+        _orig = _port
+        for _candidate in range(_port + 1, _port + 100):
+            if _port_free(_candidate):
+                _port = _candidate
+                break
+        print(f"⚠ Falling back to port {_port} (configured {_orig} was busy)")
+    # Keep CORS consistent with the port we actually bind (the SocketIO
+    # server captured the origin list at import time, so re-point it now).
+    if _port != Config.PORT:
+        try:
+            _eio = socketio.server.eio
+            _eio.cors_allowed_origins = [
+                o.replace(f':{Config.PORT}', f':{_port}')
+                for o in (_eio.cors_allowed_origins or [])]
+        except Exception as _e:
+            print(f"CORS port re-point skipped: {_e}")
+
+    socketio.run(app, host=_bind_host, port=_port,
+                 allow_unsafe_werkzeug=True,
                  ssl_context=ssl_ctx, use_reloader=False)
 
 def send_to_ui(event, data):
@@ -229,6 +494,400 @@ def api_vitals():
     except Exception as e:
         return jsonify({'cpu': 0, 'ram': 0, 'disk': 0,
                         'battery': 100, 'error': str(e)})
+
+
+@app.route('/api/rlm')
+def api_rlm():
+    """RLM (recursive memory) snapshot: hierarchy stats, world model and
+    the most recent notes at every abstraction level."""
+    try:
+        from utils.rlm import get_rlm
+        return jsonify(get_rlm().dashboard_snapshot())
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_rlm failed")
+        return jsonify({'error': 'Internal error'}), 500
+
+
+@app.route('/api/goals')
+def api_goals():
+    """Tracked goals: open list with progress + countdowns."""
+    try:
+        from utils.goals import get_goals
+        return jsonify({'goals': get_goals().list(),
+                        'stats': get_goals().stats()})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_goals failed")
+        return jsonify({'error': 'Internal error'}), 500
+
+
+@app.route('/api/capabilities')
+def api_capabilities():
+    """Capability awareness: what Jarvis can and can't do right now."""
+    try:
+        from utils.capabilities import list_all
+        caps = list_all()
+        ready = sum(1 for c in caps if c['status'] == 'ready')
+        missing = sum(1 for c in caps if c['status'] != 'ready')
+        return jsonify({'capabilities': caps,
+                        'ready': ready,
+                        'missing': missing,
+                        'total': len(caps)})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_capabilities failed")
+        return jsonify({'error': 'Internal error'}), 500
+
+
+@app.route('/api/capabilities/expand', methods=['POST'])
+def api_capabilities_expand():
+    """Create a capability expansion plan as a tracked goal."""
+    try:
+        from utils.capabilities import expand, auto_install, format_expansion_plan
+        data = request.get_json() or {}
+        cap_names = data.get('capabilities', [])
+        do_auto = data.get('auto', False)
+        if not cap_names:
+            return jsonify({'error': 'No capabilities specified'}), 400
+        plan = expand(cap_names)
+        install_result = None
+        if do_auto and plan['auto_packages']:
+            ok, output = auto_install(plan['auto_packages'])
+            install_result = {'ok': ok, 'output': output}
+        # Create a goal to track this expansion
+        goal_id = None
+        try:
+            from utils.goals import get_goals
+            g = get_goals().set(plan['goal_title'], priority='normal')
+            if g:
+                goal_id = g['id']
+        except Exception:
+            pass
+        return jsonify({
+            'plan': plan,
+            'formatted': format_expansion_plan(plan),
+            'install': install_result,
+            'goal_id': goal_id,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+def _is_loopback():
+    """True when the request comes from this Mac itself."""
+    return (request.remote_addr or '') in (
+        '127.0.0.1', '::1', '::ffff:127.0.0.1')
+
+
+def _dashboard_only():
+    """
+    Gate for dashboard-only routes (pair/list/revoke, handoff export).
+
+    Loopback (dashboard on the Mac) always passes.  Off-loopback passes
+    only with a valid JARVIS_WEBHOOK_KEY (?key= or X-Jarvis-Key) — so
+    opening JARVIS_HOST=0.0.0.0 to the LAN doesn't let anyone on the
+    network mint pairing codes or read your session.  Note _provider_gate
+    passes (None) when NO key is configured — meaning "no gate" — so
+    off-loopback without a configured key must still 403 here.
+    """
+    if _is_loopback():
+        return None
+    if not os.getenv('JARVIS_WEBHOOK_KEY', ''):
+        return jsonify({'ok': False,
+                        'error': 'dashboard-only (loopback)'}), 403
+    gate = _provider_gate()
+    if gate is not None:
+        return gate
+    return None
+
+
+def _mobile_auth():
+    """
+    Bearer auth for paired-phone routes.  Returns (device, error_resp).
+
+    Everything the PHONE calls (chat/sync/handoff POST) needs the
+    per-device token.  Dashboard routes (pair/list/revoke) do NOT use
+    this — they use _dashboard_only instead.  Redeem consumes the
+    pairing code, not a token.  Failures are rate-limited per IP.
+    """
+    from utils.mobile_link import get_link
+    link = get_link()
+    ip = (request.remote_addr or '?')
+    if link.is_rate_limited(ip):
+        return None, (jsonify({'ok': False,
+                               'error': 'too many failures — try later'}),
+                      429)
+    auth = request.headers.get('Authorization', '')
+    token = auth[7:].strip() if auth.startswith('Bearer ') else ''
+    device = link.verify_token(token) if token else None
+    if device is None:
+        link.record_auth_failure(ip)
+        return None, (jsonify({'ok': False, 'error': 'unauthorized'}),
+                      401)
+    return device, None
+
+
+@app.route('/api/mobile/pair', methods=['POST'])
+def api_mobile_pair():
+    """Dashboard: mint a single-use pairing code (shown as QR/manual)."""
+    gate = _dashboard_only()
+    if gate is not None:
+        return gate
+    try:
+        from utils.mobile_link import get_link
+        data = request.get_json(silent=True) or {}
+        code, expires_at = get_link().create_pairing_code(
+            label=data.get('label', ''))
+        return jsonify({'ok': True, 'code': code,
+                        'expires_at': expires_at})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_pair failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/redeem', methods=['POST'])
+def api_mobile_redeem():
+    """Phone: exchange a pairing code for a per-device token (once)."""
+    try:
+        from utils.mobile_link import get_link
+        link = get_link()
+        ip = (request.remote_addr or '?')
+        if link.is_rate_limited(ip):
+            return jsonify({'ok': False,
+                            'error': 'too many failures — try later'}), 429
+        data = request.get_json(silent=True) or {}
+        ok, payload = link.redeem_pairing_code(
+            data.get('code', ''), device_name=data.get('device_name', ''))
+        if not ok:
+            link.record_auth_failure(ip)
+            return jsonify({'ok': False, 'error': payload}), 400
+        return jsonify({'ok': True, **payload})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_redeem failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/devices')
+def api_mobile_devices():
+    """Dashboard: paired devices (no token material ever leaves)."""
+    gate = _dashboard_only()
+    if gate is not None:
+        return gate
+    try:
+        from utils.mobile_link import get_link
+        return jsonify({'ok': True,
+                        'devices': get_link().list_devices()})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_devices failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/devices/<device_id>', methods=['DELETE'])
+def api_mobile_revoke(device_id):
+    """Dashboard: revoke a device token (phone goes dark immediately)."""
+    gate = _dashboard_only()
+    if gate is not None:
+        return gate
+    try:
+        from utils.mobile_link import get_link
+        if get_link().revoke_device(device_id):
+            return jsonify({'ok': True, 'revoked': device_id})
+        return jsonify({'ok': False, 'error': 'unknown device'}), 404
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_revoke failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/chat', methods=['POST'])
+def api_mobile_chat():
+    """
+    Phone: run text through the SAME think→execute pipeline (host-silent,
+    mobile-stamped so destructive actions hold for a human).  wait=true →
+    synchronous reply; else 202 accepted (reply is dropped — the phone
+    should poll sync or re-ask with wait=true).
+    """
+    try:
+        device, err = _mobile_auth()
+        if err:
+            return err
+        from utils.event_bus import get_bus
+        data = request.get_json(silent=True) or {}
+        text = str(data.get('text', '') or '').strip()
+        if not text:
+            return jsonify({'ok': False, 'error': 'text required'}), 400
+        text = text[:4000]
+        bus = get_bus()
+        event = bus.from_mobile_text(
+            text, device_id=device.get('device_id'))
+        if data.get('wait'):
+            result = bus.publish(event) or 'Done.'
+            return jsonify({'ok': True,
+                            'result': str(result)[:4000]})
+        bus.publish(event, background=True)
+        return jsonify({'ok': True, 'accepted': event.id}), 202
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_chat failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/sync', methods=['POST'])
+def api_mobile_sync():
+    """
+    Phone: push memory events (idempotent by client UUID) + pull hub
+    events newer than `cursor`.  Body: {events: [...], cursor: N}.
+    """
+    try:
+        device, err = _mobile_auth()
+        if err:
+            return err
+        from utils.mobile_link import get_link
+        data = request.get_json(silent=True) or {}
+        inbound = data.get('events') or []
+        if not isinstance(inbound, list):
+            return jsonify({'ok': False,
+                            'error': 'events must be a list'}), 400
+        if len(inbound) > 100:
+            return jsonify({'ok': False,
+                            'error': 'too many events (max 100)'}), 400
+        link = get_link()
+        outcome = link.apply_sync(device.get('device_id'), inbound)
+        events, cursor = link.read_since(data.get('cursor', 0))
+        return jsonify({'ok': True, **outcome,
+                        'events': events, 'cursor': cursor})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_sync failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/mobile/handoff', methods=['GET', 'POST'])
+def api_mobile_handoff():
+    """
+    GET (dashboard/phone): export the live session bundle so a
+    conversation can move Mac ↔ phone mid-stream.
+    POST (Bearer): fold a phone-side bundle back into hub memory.
+    """
+    try:
+        from utils.mobile_link import get_link
+        if request.method == 'GET':
+            gate = _dashboard_only()
+            if gate is not None:
+                return gate
+            bundle = get_link().export_bundle(brain, executor)
+            return jsonify({'ok': True, 'bundle': bundle})
+        device, err = _mobile_auth()
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        summary = get_link().import_bundle(data.get('bundle'),
+                                           device.get('device_id', ''))
+        return jsonify({'ok': True, 'summary': summary})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_handoff failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/tasks')
+def api_tasks():
+    """Background tasks: active list + recent history + stats."""
+    try:
+        tm = executor.task_manager
+        active = [t.to_dict() for t in tm.get_active_tasks()]
+        history = [t.to_dict() for t in tm.get_history(limit=10)]
+        return jsonify({'active': active, 'history': history,
+                        'stats': tm.get_history_stats()})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_tasks failed")
+        return jsonify({'error': 'Internal error'}), 500
+
+
+@app.route('/api/tasks/<task_id>/pause', methods=['POST'])
+def api_task_pause(task_id):
+    try:
+        return jsonify({'ok': True,
+                        'message': executor.task_manager.pause_task(
+                            task_id)})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_task_pause failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/tasks/<task_id>/resume', methods=['POST'])
+def api_task_resume(task_id):
+    try:
+        return jsonify({'ok': True,
+                        'message': executor.task_manager.resume_task(
+                            task_id)})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_task_resume failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/api/tasks/<task_id>/cancel', methods=['POST'])
+def api_task_cancel(task_id):
+    try:
+        return jsonify({'ok': True,
+                        'message': executor.task_manager.cancel_task(
+                            task_id)})
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_task_cancel failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+# --- Agent-loop inspector (DEV drawer) ----------------------------------- #
+
+def _agent_loop():
+    """Process-wide AgentLoop for stop/config (lazily built from brain)."""
+    from utils.agent_loop import get_agent_loop
+    return get_agent_loop(brain)
+
+
+@app.route('/api/agent', methods=['GET', 'POST'])
+def api_agent():
+    """Config view for the live agent loop (mode / step cap / model / streaming)."""
+    loop = _agent_loop()
+    if request.method == 'GET':
+        mode = os.getenv('JARVIS_AGENT_MODE', 'auto')
+        return jsonify({
+            'mode': mode,
+            'max_steps': loop.max_steps,
+            'stream': os.getenv('JARVIS_AGENT_STREAM', '1') != '0',
+            'model': os.getenv('JARVIS_AGENT_MODEL', ''),
+            'running': getattr(loop, '_running', False),
+        })
+    data = request.get_json(silent=True) or {}
+    if 'mode' in data:
+        os.environ['JARVIS_AGENT_MODE'] = str(data['mode'])
+    if 'max_steps' in data:
+        try:
+            loop.max_steps = max(1, int(data['max_steps']))
+            os.environ['JARVIS_AGENT_MAX_STEPS'] = str(loop.max_steps)
+        except (TypeError, ValueError):
+            pass
+    if 'model' in data:
+        os.environ['JARVIS_AGENT_MODEL'] = str(data['model']).strip()
+    if 'stream' in data:
+        os.environ['JARVIS_AGENT_STREAM'] = '1' if data['stream'] else '0'
+    return jsonify({'ok': True})
+
+
+@socketio.on('agent_stop')
+def handle_agent_stop(data):
+    """Cooperative abort of the in-flight agent run (DEV drawer STOP)."""
+    loop = _agent_loop()
+    loop.stop()
+    socketio.emit('agent_status', {'message': 'stop signal sent'})
 
 
 @app.route('/health')
@@ -301,6 +960,38 @@ def onboarding():
 
 
 # --------------------------------------------------------------------- #
+# Jarvis Lite PWA (Phase 0 remote) — installable phone client.
+# /mobile is the app shell; manifest + service worker + icon are static.
+# The shell itself carries no auth: pairing codes are redeemed from the
+# phone (single-use, 10-min TTL) and the per-device Bearer token lives
+# only in the phone's localStorage, never in a URL or cookie.
+# --------------------------------------------------------------------- #
+
+@app.route('/mobile')
+def mobile_app():
+    """Jarvis Lite phone UI (Add to Home Screen → standalone)."""
+    return render_template('mobile.html')
+
+
+@app.route('/mobile-manifest.json')
+def mobile_manifest():
+    """PWA manifest: name, icons, standalone display."""
+    return app.send_static_file('mobile-manifest.json')
+
+
+@app.route('/mobile-sw.js')
+def mobile_service_worker():
+    """Service worker: cache-first app shell, never caches /api/*."""
+    resp = app.send_static_file('mobile-sw.js')
+    # A new SW version must activate promptly, not stick behind a cache.
+    resp.headers['Cache-Control'] = 'no-cache'
+    # SW scope is derived from its URL — serve from root so it can
+    # control /mobile.
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+# --------------------------------------------------------------------- #
 # BYOK provider management — bring any key at runtime, no restart.
 # Mutations require the webhook key when JARVIS_WEBHOOK_KEY is set.
 # --------------------------------------------------------------------- #
@@ -342,7 +1033,9 @@ def mcp_reload():
         pool.ensure_started()
         return jsonify({'ok': True, 'servers': pool.status()})
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+        from utils.logger import logger
+        logger.exception("mcp_reload failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/providers', methods=['POST'])
@@ -418,71 +1111,110 @@ def webhook_gateway():
     return jsonify({'ok': True, 'accepted': event.id}), 202
 
 
+@app.route('/gateway/slack', methods=['POST'])
+def slack_gateway():
+    """
+    Slack Events API + slash-command receiver (part of the omnichannel
+    gateway hub).  Handles the url_verification handshake, verifies the
+    request token when configured, and routes the message through the
+    shared think→execute pipeline — replies go out over the configured
+    incoming-webhook URL.
+    """
+    from utils.gateways import get_hub
+    hub = get_hub()
+    if hub.slack is None:
+        return jsonify({'ok': False,
+                        'error': 'slack gateway not configured'}), 503
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = {k: v for k, v in request.form.items()}
+    status, body = hub.slack.handle_http(payload or {})
+    if body and body.startswith('{'):
+        return body, status
+    return Response(body, status=status, mimetype='text/plain')
+
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    from werkzeug.utils import secure_filename
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-        
+
+    # Validate file type (images only)
+    _ALLOWED_UPLOAD = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+    import uuid
+    orig = secure_filename(file.filename or 'upload')
+    ext = os.path.splitext(orig)[1].lower()
+    if ext not in _ALLOWED_UPLOAD:
+        return jsonify({'error': f'File type {ext} not allowed. Use: {", ".join(_ALLOWED_UPLOAD)}'}), 400
+
+    # Size check (10 MB max)
+    file.seek(0, os.SEEK_END)
+    size = file.tell()
+    file.seek(0)
+    if size > 10 * 1024 * 1024:
+        return jsonify({'error': 'File too large (10 MB max)'}), 400
+
     if file:
-        # Save file as webcam_capture.jpg (overwriting it)
-        # This makes it the "current" image for analysis
-        filename = 'webcam_capture.jpg'
-        static_path = os.path.join(app.static_folder, filename)
+        # Save with UUID prefix to prevent traversal/overwrite
+        safe_name = f"upload_{uuid.uuid4().hex[:12]}{ext}"
+        static_path = os.path.join(app.static_folder, safe_name)
         file.save(static_path)
-        
+
         # Update last upload time
         global last_upload_time
         last_upload_time = time.time()
-        
+
         # Emit photo_taken event so dashboard updates instantly
         socketio.emit('photo_taken', {
-            'photo_url': '/static/webcam_capture.jpg',
+            'photo_url': f'/static/{safe_name}',
             'timestamp': time.time()
         })
-        
-        return jsonify({'success': True, 'message': 'File uploaded successfully'}), 200
+
+        return jsonify({'success': True, 'message': 'File uploaded successfully',
+                        'filename': safe_name}), 200
 
 @app.route('/upload_knowledge', methods=['POST'])
 def upload_knowledge():
+    from werkzeug.utils import secure_filename
+    from utils.logger import logger
     if 'files' not in request.files:
         return jsonify({'error': 'No files uploaded'}), 400
-    
+
     files = request.files.getlist('files')
     results = []
     full_text_content = ""
-    
+
     for file in files:
         if file.filename == '':
             continue
-            
+
         try:
-            # Save temporarily
-            # Use safe temp path
-            filename = file.filename
-            temp_path = os.path.join(app.static_folder, 'temp_' + filename)
+            # Save temporarily with safe name
+            import uuid
+            orig = secure_filename(file.filename or 'upload')
+            temp_path = os.path.join(app.static_folder, f'temp_{uuid.uuid4().hex[:8]}_{orig}')
             file.save(temp_path)
-            
-            # Ingest
-            # Ingest (store=False means only Short-Term initially)
-            text_content = executor.librarian.ingest_file(temp_path, store=False)
-            full_text_content += f"\nFILE: {filename}\nCONTENT:\n{text_content}\n"
-            
-            # TODO: Store this knowledge in Vector DB (Future)
-            # For now, we just acknowledge it.
-            print(f"Ingested {filename}: {len(text_content)} chars")
-            
-            results.append(filename)
-            
+
+            # store=True writes to the knowledge vault (STUDY PERMANENTLY);
+            # store=False keeps only the 30-min feed memory.
+            store = 'study' in request.form
+            text_content = executor.librarian.ingest_file(temp_path, store=store)
+            full_text_content += f"\nFILE: {orig}\nCONTENT:\n{text_content}\n"
+
+            logger.info("Ingested %s: %d chars", orig, len(text_content))
+            results.append(orig)
+
             # Clean up
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            
+
         except Exception as e:
-            print(f"Error ingesting {file.filename}: {e}")
-            return jsonify({'error': str(e)}), 500
+            logger.exception("Error ingesting %s", file.filename)
+            return jsonify({'error': 'File ingestion failed'}), 500
 
     if results:
         # Inject into Brain's short-term memory
@@ -502,7 +1234,17 @@ def upload_knowledge():
 
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
+    from utils.logger import logger
+    # Auth gate: require JARVIS_WEBHOOK_KEY when set, or verify Origin
+    webhook_key = getattr(Config, 'WEBHOOK_KEY', None) or os.getenv('JARVIS_WEBHOOK_KEY')
+    if webhook_key:
+        # Check auth from query param or first message header
+        from flask import request as _req
+        client_key = _req.args.get('key', '')
+        if client_key != webhook_key:
+            logger.warning("SocketIO connect rejected: invalid webhook key")
+            return False  # reject connection
+    logger.info("Client connected")
     send_to_ui('status', {'message': 'Jarvis Online'})
     
     # Start system vitals monitoring
@@ -713,12 +1455,16 @@ def handle_relationship_action(data):
 def handle_meeting_action(data):
     """Meeting mode control from dashboard."""
     action = (data or {}).get('action', '')
+    # Live transcript rides a dedicated event into the MTG drawer — never
+    # the chat feed, which the client polls every 5s while recording.
+    if action == 'transcript':
+        text = executor.meeting.get_live_transcript() or ''
+        socketio.emit('meeting_transcript', {'text': text})
+        return
     if action == 'start':
         result = executor.meeting.start_recording()
     elif action == 'stop':
         result = executor.meeting.stop_recording()
-    elif action == 'transcript':
-        result = executor.meeting.get_live_transcript() or "No transcript yet."
     else:
         result = "Unknown meeting action."
     socketio.emit('ai_text', {'text': result})
@@ -726,22 +1472,30 @@ def handle_meeting_action(data):
 
 @socketio.on('privacy_action')
 def handle_privacy_action(data):
-    """Privacy settings from dashboard."""
+    """Privacy settings from dashboard → structured snapshot for SEC drawer."""
     action = (data or {}).get('action', '')
     key = (data or {}).get('key', '')
     value = (data or {}).get('value', '')
-    if action == 'get':
-        result = json.dumps(executor.privacy.get_all_settings(), indent=2)
-    elif action == 'update':
+    if action not in ('get', 'update', 'update_trust', 'summary', 'audit'):
+        socketio.emit('ai_text', {'text': 'Unknown privacy action.'})
+        return
+
+    result = ''
+    if action == 'update':
         result = executor.privacy.update_setting(key, value)
-    elif action == 'summary':
+    elif action == 'update_trust':
+        result = executor.privacy.update_trust(key, value)
+    elif action in ('get', 'summary'):
         result = executor.privacy.get_trust_summary()
-    elif action == 'audit':
-        entries = executor.privacy.get_audit_log(limit=10)
-        result = json.dumps(entries, indent=2)
-    else:
-        result = "Unknown privacy action."
-    socketio.emit('ai_text', {'text': result})
+
+    # Read results belong in the drawer, not dumped into the chat feed.
+    socketio.emit('privacy_update', {
+        'settings': executor.privacy.get_all_settings(),
+        'audit': executor.privacy.get_audit_log(limit=10),
+        'summary': result,
+    })
+    if action in ('update', 'update_trust') and result:
+        socketio.emit('ai_text', {'text': result})
 
 
 @socketio.on('fridge_action')
@@ -800,6 +1554,54 @@ def handle_complex_task_action(data):
     socketio.emit('ai_text', {'text': result})
 
 
+@socketio.on('goals_action')
+def handle_goals_action(data):
+    """Dashboard controls for tracked goals: list/set/done/drop."""
+    action = (data or {}).get('action', '')
+    try:
+        from utils.goals import get_goals
+        store = get_goals()
+    except Exception as e:
+        socketio.emit('ai_text', {'text': f"Goals unavailable: {e}"})
+        return
+    if action == 'list':
+        socketio.emit('goals_update', {'goals': store.list(),
+                                       'stats': store.stats()})
+        return
+    if action == 'set':
+        g = store.set((data or {}).get('title', ''),
+                      deadline=str((data or {}).get('deadline') or ''),
+                      priority=(data or {}).get('priority'))
+        socketio.emit('ai_text', {'text':
+                                  f"Goal [{g['id']}] tracked: {g['title']}."
+                                  if g else "Goals are disabled."})
+    elif action in ('done', 'drop'):
+        ref = str((data or {}).get('goal', '')).strip().lower()
+        matched = None
+        for g in store.list(include_done=False):
+            if ref in g.get('id', '').lower() \
+                    or (ref and ref in g.get('title', '').lower()):
+                matched = g
+                break
+        if matched is None:
+            socketio.emit('ai_text',
+                          {'text': f"No open goal matches '{ref}'."})
+            return
+        if action == 'done':
+            store.complete(matched['id'])
+            socketio.emit('ai_text',
+                          {'text': f"Goal complete: {matched['title']}."})
+        else:
+            store.drop(matched['id'])
+            socketio.emit('ai_text',
+                          {'text': f"Goal dropped: {matched['title']}."})
+    else:
+        socketio.emit('ai_text', {'text': 'Unknown goals action.'})
+        return
+    socketio.emit('goals_update', {'goals': store.list(),
+                                   'stats': store.stats()})
+
+
 @socketio.on('automation_action')
 def handle_automation_action(data):
     """Dashboard controls for recurring automations: list/add/cancel."""
@@ -833,9 +1635,12 @@ def _emit_automations():
         for j in jobs:
             j['describe'] = executor.recurring._describe(j)
             try:
+                nxt = executor.recurring._next_fire(j)
                 j['next'] = executor.recurring.describe_next(j)
+                j['next_ts'] = nxt.timestamp() if nxt else None
             except Exception:
                 j['next'] = ''
+                j['next_ts'] = None
     except Exception as e:
         print(f"Automations emit failed: {e}")
     socketio.emit('automations_update', {'jobs': jobs})

@@ -129,11 +129,26 @@ class PrivacyFramework:
     # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
+    def _backup_corrupt(self, path, exc):
+        """Rename a corrupt JSON file aside instead of silently resetting."""
+        try:
+            import time as _t
+            backup = f"{path}.corrupt.{int(_t.time())}"
+            os.replace(path, backup)
+            logger.warning("Backed up corrupt %s -> %s (%s)",
+                           path, backup, exc)
+        except OSError as e2:
+            logger.warning("Could not back up corrupt %s: %s", path, e2)
+
     def _load_settings(self):
         try:
             if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    saved = json.load(f)
+                try:
+                    with open(self.settings_file, 'r') as f:
+                        saved = json.load(f)
+                except (json.JSONDecodeError, ValueError) as je:
+                    self._backup_corrupt(self.settings_file, je)
+                    saved = {}
                 # Merge with defaults (new keys get default values)
                 for key, value in saved.items():
                     if key in self.settings:
@@ -153,8 +168,12 @@ class PrivacyFramework:
         self._audit_log = []
         try:
             if os.path.exists(self.audit_file):
-                with open(self.audit_file, 'r') as f:
-                    data = json.load(f)
+                try:
+                    with open(self.audit_file, 'r') as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, ValueError) as je:
+                    self._backup_corrupt(self.audit_file, je)
+                    data = []
                 if isinstance(data, list):
                     # Keep last 1000 entries
                     self._audit_log = data[-1000:]
@@ -206,9 +225,49 @@ class PrivacyFramework:
 
         return ('allow', None)
 
+    def _prune_templates(self):
+        """Drop expired pre-approval templates and cap list growth."""
+        now = datetime.datetime.now()
+        kept = []
+        for t in self.approved_actions:
+            exp = t.get('expires_at')
+            if exp:
+                try:
+                    if datetime.datetime.fromisoformat(exp) <= now:
+                        continue  # expired — drop
+                except (ValueError, TypeError):
+                    continue  # malformed expiry — drop
+            kept.append(t)
+        # Cap at 100 newest to bound growth
+        self.approved_actions = kept[-100:]
+
+    def _prune_pending(self):
+        """Drop settled/stale pending approvals and cap dict growth."""
+        now = datetime.datetime.now()
+        for aid in [k for k, v in self.pending_approvals.items()
+                    if not isinstance(v, dict)
+                    or v.get('status') in ('approved', 'denied')]:
+            del self.pending_approvals[aid]
+        # Cap at 100 newest pending
+        if len(self.pending_approvals) > 100:
+            by_created = sorted(
+                self.pending_approvals.items(),
+                key=lambda kv: kv[1].get('created', ''))
+            for aid, _ in by_created[:-100]:
+                del self.pending_approvals[aid]
+
     def _is_pre_approved(self, action, context=None):
-        """Check if an action matches a pre-approved template."""
+        """Check if an action matches a non-expired pre-approved template."""
+        self._prune_templates()
+        now = datetime.datetime.now()
         for template in self.approved_actions:
+            exp = template.get('expires_at')
+            if exp:
+                try:
+                    if datetime.datetime.fromisoformat(exp) <= now:
+                        continue  # expired
+                except (ValueError, TypeError):
+                    continue  # malformed — treat as expired
             if template.get('action') == action:
                 # Check any context constraints
                 constraints = template.get('constraints', {})
@@ -229,6 +288,7 @@ class PrivacyFramework:
     def _create_approval(self, action, context=None):
         """Create a pending approval request."""
         import uuid
+        self._prune_pending()
         approval_id = str(uuid.uuid4())[:8]
 
         self.pending_approvals[approval_id] = {
@@ -360,6 +420,20 @@ class PrivacyFramework:
             self.log_action('setting_changed', {'key': key, 'old': old_value, 'new': value})
             return f"Updated {key}: {old_value} → {value}"
         return f"Unknown setting: {key}"
+
+    def update_trust(self, category, level):
+        """Set the trust level for one action category (validated)."""
+        if category not in self.settings.get('trust_levels', {}):
+            return f"Unknown action category: {category}"
+        if level not in TRUST_LEVELS:
+            return f"Unknown trust level: {level}"
+        old = self.settings['trust_levels'][category]
+        self.settings['trust_levels'][category] = level
+        self._save_settings()
+        self.log_action('trust_changed', {'category': category,
+                                          'old': old, 'new': level})
+        return (f"{category.upper()} trust → {level} "
+                f"({TRUST_LEVELS[level]})")
 
     def get_setting(self, key):
         """Get a privacy setting."""

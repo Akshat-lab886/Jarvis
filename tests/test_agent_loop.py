@@ -247,7 +247,18 @@ class TestToolSpecs(unittest.TestCase):
 
     def test_forbidden_never_offered(self):
         names = {s['function']['name'] for s in TOOL_SPECS}
-        self.assertFalse(names & FORBIDDEN_TOOLS)
+        # The in-loop tools (reasoning: think/recall_deep/memory_about/
+        # task_plan/delegate; autonomy: goal_set/goal_list/goal_done/
+        # background_task/task_status/automate) ARE offered as native
+        # tool specs while also being excluded from the any_action escape
+        # hatch — a deliberate two-sided guard (see test_rlm.py).
+        # Every OTHER forbidden tool must never be offered.
+        _IN_LOOP = {'think', 'recall_deep', 'memory_about',
+                    'task_plan', 'delegate',
+                    'goal_set', 'goal_list', 'goal_done',
+                    'background_task', 'task_status', 'automate',
+                    'capability_check', 'capability_expand'}
+        self.assertFalse((names - _IN_LOOP) & FORBIDDEN_TOOLS)
 
 
 if __name__ == '__main__':

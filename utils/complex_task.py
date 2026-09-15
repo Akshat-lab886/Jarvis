@@ -726,6 +726,41 @@ class ComplexTaskManager:
         with self._lock:
             return self._tasks.get(task_id)
 
+    # --- goal linkage ---------------------------------------------------- #
+    def _goal_progress_for(self, task_id):
+        """
+        [(goal_id, progress_pct)] for every goal linked to *task_id*.
+        Progress = mean completion across ALL of the goal's linked tasks
+        (this task's fresh state included).  Best-effort, never raises.
+
+        Lives on the manager because only it can resolve sibling tasks
+        via ``get_task``; ``ComplexTask`` holds no back-pointer.
+        """
+        try:
+            from utils.goals import get_goals
+            store = get_goals()
+            out = []
+            for g in store.list(include_done=False):
+                tids = g.get('task_ids') or []
+                if task_id not in tids:
+                    continue
+                pcts = []
+                for tid in tids:
+                    try:
+                        t = self.get_task(tid)
+                        pcts.append(t.progress_pct() if t else 0)
+                    except Exception:
+                        pcts.append(0)
+                if pcts:
+                    out.append((g['id'], sum(pcts) // len(pcts)))
+            return out
+        except Exception:
+            return []
+
+    # Back-compat alias (older hook name).
+    def _goal_progress(self, task_id):
+        return self._goal_progress_for(task_id)
+
     def get_recent_tasks(self, limit=10):
         """Return the most recent tasks (completed or active)."""
         with self._lock:
@@ -915,6 +950,39 @@ class ComplexTaskManager:
                     registry=getattr(self.executor, 'skills', None))
             except Exception as e:
                 logger.debug(f"self-review skipped: {e}")
+
+            # Goal linkage: completing a task advances its goal (and may
+            # finish it), and every completion announces through the
+            # notifier (dashboard feed always; voice/Telegram per config).
+            # Failures announce too — silence is how goals die quietly.
+            try:
+                from utils.goals import (get_goals, check_goal_completion,
+                                         enabled as _goals_on)
+                from utils.notify import get_notifier
+                _nb = get_notifier()
+                if _goals_on():
+                    for _gid in check_goal_completion(
+                            task_manager=self, notifier=_nb):
+                        logger.info("goal %s auto-completed by task %s",
+                                    _gid, task_id)
+                if task.status == TaskStatus.COMPLETED:
+                    _prog = self._goal_progress_for(task_id)
+                    if _prog:
+                        for _gid, _pct in _prog:
+                            try:
+                                get_goals().update_progress(_gid, _pct)
+                            except Exception:
+                                pass
+                    _nb.announce(
+                        f"✅ Background task done: "
+                        f"{task.description[:100]}", priority='normal')
+                elif task.status == TaskStatus.FAILED:
+                    _nb.announce(
+                        f"❌ Background task failed: "
+                        f"{task.description[:100]} — check /tasks.",
+                        priority='normal')
+            except Exception as e:
+                logger.debug(f"goal/notify hook skipped: {e}")
 
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}\n{traceback.format_exc()}")
@@ -1460,6 +1528,15 @@ class ComplexTaskManager:
 
         if isinstance(cmd, dict) and cmd.get('action') \
                 and cmd.get('action') != 'chat':
+            # Trusted-background marker so the approvals gate applies
+            # the AUTO_APPROVABLE fast path in critical mode — while
+            # destructive actions and strict mode still hold for a
+            # human.  Without the marker every gated step would stall
+            # a background task on an unattended approval hold.
+            try:
+                cmd['_origin'] = 'proactive'
+            except Exception:
+                pass
             return self.executor.execute_command(cmd, self.brain)
 
         # No executable action identified — fall back to reasoning

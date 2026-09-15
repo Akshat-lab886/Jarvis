@@ -1,0 +1,14 @@
+{
+  "name": "Jarvis Lite",
+  "short_name": "Jarvis",
+  "description": "Lightweight paired remote for your Jarvis Mac hub. Chat, offline notes, memory sync.",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050607",
+  "theme_color": "#0B0D0F",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -34,6 +34,11 @@ CATALOG = {
         dict(context=131072, vision=True),
 
     # --- Google Gemini ------------------------------------------------ #
+    # gemini-3.6-flash mirrors Config.GEMINI_MODEL (the shipped default):
+    # without an entry it falls through to the 32k heuristic and fails
+    # the long_context capability check, so long-context requests would
+    # wrongly skip the user's primary Gemini model.
+    "google:gemini-3.6-flash":         dict(context=1048576, vision=True),
     "google:gemini-2.5-flash":         dict(context=1048576, vision=True),
     "google:gemini-2.5-pro":           dict(context=1048576, vision=True),
     "google:gemini-2.0-flash":         dict(context=1048576, vision=True),
@@ -57,6 +62,11 @@ CATALOG = {
 
     # --- OpenRouter --------------------------------------------------- #
     "openrouter:openrouter/auto":      dict(context=200000, vision=True),
+
+    # --- Custom OpenAI-compatible endpoint ------------------------------ #
+    # Local omni gateway (CUSTOM_OPENAI_BASE_URL). Omni = multimodal, so
+    # vision is on; context is a conservative published-style maximum.
+    "custom:oc/mimo-v2.5-free":        dict(context=128000, vision=True),
 }
 
 # Name fragments that imply vision support when a model is unknown.

@@ -67,28 +67,42 @@ class GitManager:
         try:
             if not self.token or not self.username:
                  return "Error: GitHub credentials not found in .env"
-            
-            # Auth URL: https://User:Token@github.com/User/Repo.git
-            # repo_url is typically https://github.com/User/Repo.git
-            auth_url = repo_url.replace("https://", f"https://{self.username}:{self.token}@")
-            
-            print(f"--- Pushing to Remote ---")
-            
-            # git remote add origin [url]
-            # Handle if origin already exists
+
+            # Use GIT_ASKPASS to avoid token in process args (visible in ps)
+            auth_url = repo_url.replace("https://", f"https://{self.username}@")
+            askpass_script = f'#!/bin/sh\necho "{self.token}"'
+            import tempfile
+            askpass_path = None
             try:
-                subprocess.run(["git", "remote", "add", "origin", auth_url], cwd=project_path, check=True, capture_output=True)
-            except subprocess.CalledProcessError:
-                # Maybe origin exists, try set-url
-                subprocess.run(["git", "remote", "set-url", "origin", auth_url], cwd=project_path, check=True)
-            
-            # git branch -M main
-            subprocess.run(["git", "branch", "-M", "main"], cwd=project_path, check=True)
-            
-            # git push -u origin main
-            subprocess.run(["git", "push", "-u", "origin", "main"], cwd=project_path, check=True)
-            
-            return "Code pushed to GitHub successfully."
+                fd, askpass_path = tempfile.mkstemp(suffix='.sh', prefix='git_askpass_')
+                with os.fdopen(fd, 'w') as f:
+                    f.write(askpass_script)
+                os.chmod(askpass_path, 0o700)
+                env = os.environ.copy()
+                env['GIT_ASKPASS'] = askpass_path
+                env['GIT_TERMINAL_PROMPT'] = '0'
+
+                print(f"--- Pushing to Remote ---")
+
+                # git remote add origin [url]
+                try:
+                    subprocess.run(["git", "remote", "add", "origin", auth_url],
+                                   cwd=project_path, check=True, capture_output=True, env=env)
+                except subprocess.CalledProcessError:
+                    subprocess.run(["git", "remote", "set-url", "origin", auth_url],
+                                   cwd=project_path, check=True, env=env)
+
+                # git branch -M main
+                subprocess.run(["git", "branch", "-M", "main"], cwd=project_path, check=True, env=env)
+
+                # git push -u origin main
+                subprocess.run(["git", "push", "-u", "origin", "main"],
+                               cwd=project_path, check=True, env=env)
+
+                return "Code pushed to GitHub successfully."
+            finally:
+                if askpass_path and os.path.exists(askpass_path):
+                    os.remove(askpass_path)
             
         except subprocess.CalledProcessError as e:
             return f"Push Error: {e}"

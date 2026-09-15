@@ -23,15 +23,45 @@ class MobileManager:
                 if os.path.exists(p) and os.access(p, os.X_OK):
                     self.flutter_cmd = p
                     break
-        
+
+    def _resolve(self, *parts):
+        """Resolve *parts* under the workspace and return the absolute
+        path ONLY if it stays inside ``mobile_projects/``.  Returns None
+        when a ``..`` component, an absolute path, or a drive/prefix
+        would escape the workspace.  Every path built from an
+        agent/LLM-supplied name goes through here."""
+        workspace = os.path.abspath(self.workspace_dir)
+        candidate = os.path.abspath(os.path.join(workspace, *parts))
+        if candidate == workspace or \
+                candidate.startswith(workspace + os.sep):
+            return candidate
+        return None
+
+    @staticmethod
+    def _safe_component(name):
+        """True only when *name* is one plain (possibly dotted) directory
+        component with no path separators — so it can never address a
+        sibling or parent directory regardless of who supplied it."""
+        name = str(name or '')
+        return bool(name) and not os.path.isabs(name) and \
+            '/' not in name and '\\' not in name and \
+            name not in ('.', '..')
+
     def init_flutter_app(self, app_name):
         """
         Scaffolds a new Flutter application.
         """
         try:
             # app_name = app_name.replace(" ", "_").lower() # Original line, removed as per instruction
-            full_path = os.path.join(self.workspace_dir, app_name)
-            
+            name = str(app_name or '').strip()
+            if not MobileManager._safe_component(name):
+                return (f"Error: Invalid project name {app_name!r} — "
+                        "must be a single folder name.")
+            full_path = self._resolve(name)
+            if full_path is None:
+                return (f"Error: Project {app_name} resolves outside "
+                        "mobile_projects/.")
+
             if os.path.exists(full_path):
                 return f"Error: Project {app_name} already exists."
 
@@ -43,7 +73,7 @@ class MobileManager:
             # the workspace to keep projects in mobile_projects/
             os.makedirs(self.workspace_dir, exist_ok=True)
             result = subprocess.run(
-                [self.flutter_cmd, "create", app_name],
+                [self.flutter_cmd, "create", name],
                 cwd=self.workspace_dir,
                 capture_output=True,
                 text=True
@@ -62,8 +92,14 @@ class MobileManager:
         Initializes a new React Native (Expo) application.
         """
         try:
-            app_name = app_name.replace(" ", "-").lower() # npm prefers hyphens or lowercase
-            project_path = os.path.join(self.workspace_dir, app_name)
+            name = str(app_name or '').strip().replace(" ", "-").lower()
+            if not MobileManager._safe_component(name):
+                return (f"Error: Invalid project name {app_name!r} — "
+                        "must be a single folder name.")
+            project_path = self._resolve(name)
+            if project_path is None:
+                return (f"Error: Project {app_name} resolves outside "
+                        "mobile_projects/.")
 
             if os.path.exists(project_path):
                 return f"Error: Mobile Project '{app_name}' already exists."
@@ -73,7 +109,7 @@ class MobileManager:
                 return "Error: 'npx' not found. Please install Node.js."
 
             # using create-expo-app for easier setup
-            cmd = ["npx", "create-expo-app", app_name, "--yes"] # --yes to skip prompts
+            cmd = ["npx", "create-expo-app", name, "--yes"] # --yes to skip prompts
             
             result = subprocess.run(
                 cmd,
@@ -95,10 +131,13 @@ class MobileManager:
         Reads content of a file in a mobile project.
         """
         try:
-            full_path = os.path.join(self.workspace_dir, project_name, file_path)
+            full_path = self._resolve(project_name, file_path)
+            if full_path is None:
+                return (f"Error: Refusing to read outside mobile_projects/ "
+                        f"({file_path!r}).")
             if not os.path.exists(full_path):
                 return f"Error: File {file_path} not found in {project_name}."
-            
+
             with open(full_path, 'r', encoding='utf-8') as f:
                 return f.read()
         except Exception as e:
@@ -110,8 +149,11 @@ class MobileManager:
         Automatically creates directories if they don't exist.
         """
         try:
-            full_path = os.path.join(self.workspace_dir, project_name, file_path)
-            
+            full_path = self._resolve(project_name, file_path)
+            if full_path is None:
+                return (f"Error: Refusing to write outside mobile_projects/ "
+                        f"({file_path!r}).")
+
             # Ensure directory exists
             dir_name = os.path.dirname(full_path)
             if dir_name and not os.path.exists(dir_name):
@@ -189,11 +231,14 @@ class MobileManager:
             dependencies = blueprint.get('dependencies', [])
             if dependencies:
                 print(f"--- Step 2: Install Dependencies ({len(dependencies)}) ---")
-                dep_str = " ".join(dependencies)
-                cmd = f"flutter pub add {dep_str}"
-                project_path = os.path.join(self.workspace_dir, project_name)
-                
-                subprocess.run(cmd, shell=True, cwd=project_path, check=False)
+                project_path = self._resolve(project_name)
+                if project_path is None:
+                    return (f"Error: Refusing to install into "
+                            f"{project_name!r} (outside mobile_projects/).")
+                # argv, no shell — package names are agent-supplied and a
+                # name like ``;rm -rf /`` must never reach ``sh -c``.
+                subprocess.run(["flutter", "pub", "add", *dependencies],
+                               cwd=project_path, check=False)
             
             # Step 3: The Coding Loop
             from utils.brain import Brain
@@ -286,18 +331,18 @@ class MobileManager:
         Returns "No errors found." if clean, else the error log.
         """
         try:
-             project_path = os.path.join(self.workspace_dir, project_name)
+             project_path = self._resolve(project_name)
+             if project_path is None:
+                 return (f"Error: Refusing to analyze outside "
+                         f"mobile_projects/ ({project_name!r}).")
              if not os.path.exists(project_path):
                  return f"Error: Project {project_name} not found."
              
              print(f"--- verifing code integrity for {project_name} ---")
              
              # flutter analyze
-             cmd = f"{self.flutter_cmd} analyze"
-             
              result = subprocess.run(
-                 cmd,
-                 shell=True,
+                 [self.flutter_cmd, "analyze"],
                  cwd=project_path,
                  capture_output=True,
                  text=True

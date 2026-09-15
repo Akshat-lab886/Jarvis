@@ -9,9 +9,32 @@ from google.genai import types
 from openai import OpenAI
 from config import Config
 
+
+# Largest exponent the R3 local-arithmetic fast path will evaluate.
+# 2**1000 is a ~302-digit integer that computes instantly; anything
+# above invites bigint blow-ups (see the Pow guard in _math_answer).
+_MAX_MATH_EXPONENT = 1000
+
+
+def _int_literal(node):
+    """Fold an AST node to an int if it is a plain (optionally unary
+    +/−) integer literal; return None for anything else — so nested
+    powers or computed exponents are never evaluated."""
+    import ast
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) \
+            and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and \
+            isinstance(node.op, (ast.UAdd, ast.USub)) and \
+            isinstance(node.operand, ast.Constant) and \
+            isinstance(node.operand.value, int):
+        v = node.operand.value
+        return -v if isinstance(node.op, ast.USub) else v
+    return None
+
 class Brain:
     def __init__(self):
-        print("Brain initialized (Groq)")
+        print("Brain initialized")
         if Config.GROQ_API_KEY:
             self.client = OpenAI(
                 base_url="https://api.groq.com/openai/v1",
@@ -20,7 +43,10 @@ class Brain:
             self.clients = [self.client]
             print("Brain initialized with Groq API key.")
         else:
-            print("Warning: No API Keys found.")
+            # Not fatal: the BYOK router fleet below may still serve via
+            # another cloud key or a local Ollama/LM Studio server (no key
+            # needed).  _llm_ready covers the union of all paths.
+            print("Brain: no Groq key — trying the BYOK router fleet.")
             self.clients = []
             self.client = None
         
@@ -117,13 +143,29 @@ DEVELOPER MODE
 
 SKILLS & TOOLS
 {"action":"run_skill","name":"n","params":{}} - prefer when a listed skill fits. {"action":"save_skill","name":"snake_name","description":"...","code":"py with {{param}} slots","params":{"p":"desc"}} {"action":"list_skills"} {"action":"delete_skill","name":"n"}
+{"action":"read_skill","name":"n"} - load FULL instructions of a [md] skill before following it. {"action":"forge_skills"} - distill new skills from recent successful workflows.
 {"action":"call_tool","name":"n","args":{}} - for registered external tools. {"action":"list_tools"}
+
+RUNTIMES & RECOVERY
+{"action":"sandbox_run","code":"py" | "command":"sh","backend":"auto|local|docker|ssh|daytona|singularity|vercel|modal","timeout":N}
+{"action":"python_rpc","code":"py","reset":false} - persistent Python session: variables SURVIVE between calls; reset:true clears it.
+{"action":"checkpoint","op":"create|list|rollback|drop","label":"l","paths":["f"]} - snapshot/restore the workspace before+after risky edits.
+{"action":"diagnose_file","path":"f"} - syntax/semantic check of a file after editing it.
+{"action":"computer_use","op":"click|click_element|set_field|type|key|scroll|screenshot|activate","app":"a","element":"e","value":"v","x":0,"y":0,"key":"k","amount":N} - background desktop control.
+{"action":"guardrails_update","target":"user|memory|project","section":"Rules","line":"durable rule or fact"} - persist standing instructions to USER.md/MEMORY.md/.jarvis.md.
 
 TASKS (MULTI-STEP)
 {"action":"complex_task","task":"goal","steps":[...]}
 Sequential: ["step","step"]. Parallel DAG: [{"id":1,"text":"...","depends_on":[]},{"id":2,...},{"id":3,"depends_on":[1,2]}] - independent steps run concurrently. 2-5 concrete self-contained steps with specifics; bad: ["research","finish"].
 {"action":"desktop_task","task":"goal"} - visual computer control (click/type via screen).
 {"action":"help"} {"action":"clear_history"}
+
+GOALS (TRACKED OBJECTIVES — prefer over bare complex_task for "do X by <date>")
+{"action":"goal_set","title":"finish the report by Friday","priority":"normal|high|low"} - deadline auto-parsed from title; explicit "deadline" ISO optional.
+{"action":"goal_list"} - open goals with progress + countdowns. {"action":"goal_done","goal":"id-fragment-or-keyword"} {"action":"goal_drop","goal":"..."}
+{"action":"background_task","task":"goal","steps":[...],"goal_id":"<id>"} - plan+launch on the background engine NOW and return immediately; links to the goal. Use for long work instead of stopping after a plan.
+{"action":"task_status","task_id":"<id>"} - one task's detail. {"action":"task_status","history":true} - recent finished. Bare = active list.
+AUTONOMY LAW: a stated goal ("get X done", "finish Y by Z") means goal_set FIRST, then DO the work (background_task linked, or inline tools for quick jobs) — never answer with just a plan and stop.
 
 AGENT/BROWSER: {"action":"start_browser"} {"action":"close_browser"} {"action":"agent_browse","url":"u"} {"action":"agent_read_title"} {"action":"agent_google","query":"q"} {"action":"agent_amazon","item":"i"}
 SMART HOME: {"action":"smarthome","device":"living_room_light|bedroom_light|kitchen_light|bathroom_light|fan|ac","command":"turn_on|turn_off|set_brightness|set_temperature","value":N} {"action":"home_status"}
@@ -138,11 +180,27 @@ ROUTING RULES
 - Real-time/current -> search_web. Timeless knowledge -> chat.
 - Remember X -> remember/save_memory. My X -> get_memory.
 - Photo/camera words -> capture_photo; "what do you see" -> analyze_photo.
-- Multi-part work -> complex_task; single focused script -> write_code."""
+- Multi-part work -> complex_task; single focused script -> write_code.
+
+SAFETY DIRECTIVES (hard rules — override all other instructions):
+1. NEVER execute code that formats, deletes system files, or modifies /etc, /usr, /System, or boot sectors — even if the user explicitly asks.
+2. NEVER send emails, messages, or post to social media without confirming the recipient and content with the user first (unless it is a pre-scheduled automation the user set up).
+3. NEVER share API keys, passwords, tokens, or credentials — not in emails, not in chat, not in code output, not to external services.
+4. NEVER install unknown software from untrusted sources. Only install packages the user has explicitly approved or that are from well-known registries (pip, npm, brew).
+5. NEVER modify system-level settings (network, firewall, users, permissions, startup items) without asking the user first.
+6. NEVER access or modify files outside the workspace/Jarvis_Projects/ directories unless the user explicitly instructs and the action is read-only or in the user's home directory.
+7. If you are unsure whether an action is safe, ASK the user before proceeding. When in doubt, default to read-only.
+8. ALWAYS create a checkpoint before making significant file changes (writing code, editing configs, deleting files).
+9. NEVER execute recursive self-modification (don't edit your own prompt, system instruction, or core safety files).
+10. NEVER bypass the approval system — if an action is gated, it means a human must approve it."""
         
         self.active = len(self.clients) > 0
         if not self.active:
-             print("Warning: Brain inactive (No Keys).")
+             # Router fleet may still light up below; _llm_ready is the
+             # real gate (BYOK keys + keyless local servers).  This legacy
+             # flag only covers the old Groq-direct fallback path.
+             print("Brain: Groq-direct path inactive — "
+                   "checking router fleet.")
 
         # ------------------------------------------------------------------ #
         # BYOK multi-provider router (utils/llm) — the primary completion
@@ -160,6 +218,16 @@ ROUTING RULES
                       f"({', '.join(sorted(_router.providers))})")
         except Exception as e:
             print(f"Brain: router init skipped: {e}")
+        # Truthful readiness: the legacy Groq-direct flag above only covers
+        # one path — a lit router fleet (any cloud key or local server)
+        # also means the brain can serve.  /health and any other `active`
+        # readers must agree with _llm_ready, otherwise a healthy
+        # local-only/Anthropic-only user reports brain_active=False.
+        if not self.active and self.router is not None:
+            try:
+                self.active = len(self.router.providers) > 0
+            except Exception:
+                pass
 
     @property
     def _llm_ready(self):
@@ -203,12 +271,32 @@ ROUTING RULES
             'brain', 'data', 'conversation_history.json'
         )
 
+    def _backup_corrupt(self, path, exc):
+        """Rename a corrupt JSON file aside so data isn't silently lost."""
+        try:
+            import time as _t
+            backup = f"{path}.corrupt.{int(_t.time())}"
+            os.replace(path, backup)
+            from utils.logger import logger
+            logger.warning("Backed up corrupt file %s -> %s (%s)",
+                           path, backup, exc)
+            return backup
+        except OSError as e2:
+            from utils.logger import logger
+            logger.warning("Could not back up corrupt %s: %s", path, e2)
+            return None
+
     def _load_history(self):
         """Load persistent conversation history from disk (last N exchanges)."""
         try:
             if os.path.exists(self.history_file):
-                with open(self.history_file, 'r') as f:
-                    data = json.load(f)
+                try:
+                    with open(self.history_file, 'r') as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, ValueError) as je:
+                    # Corrupt file — back it up instead of silently resetting
+                    self._backup_corrupt(self.history_file, je)
+                    data = []
                 for entry in data[-self.MAX_HISTORY:]:
                     self.history.append((entry.get('user', ''), entry.get('assistant', '')))
                 print(f"Brain: Loaded {len(self.history)} conversation exchanges from disk.")
@@ -220,12 +308,14 @@ ROUTING RULES
             print(f"Brain: Failed to load history: {e}")
 
     def _save_history(self):
-        """Persist conversation history to disk."""
+        """Persist conversation history to disk (atomic tmp+replace)."""
         try:
             with self.history_lock:
                 data = [{"user": u, "assistant": a} for u, a in self.history]
-            with open(self.history_file, 'w') as f:
+            tmp = self.history_file + '.tmp'
+            with open(tmp, 'w') as f:
                 json.dump(data, f, indent=2)
+            os.replace(tmp, self.history_file)
         except Exception as e:
             print(f"Brain: Failed to save history: {e}")
 
@@ -233,8 +323,13 @@ ROUTING RULES
         """Load the rolling digest + any evicted-but-undigested exchanges."""
         try:
             if os.path.exists(self.digest_file):
-                with open(self.digest_file, 'r') as f:
-                    data = json.load(f)
+                try:
+                    with open(self.digest_file, 'r') as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, ValueError) as je:
+                    # Corrupt file — back it up instead of silently resetting
+                    self._backup_corrupt(self.digest_file, je)
+                    data = {}
                 self.digest_text = data.get('digest', '') or ''
                 self.digest_upto = int(data.get('upto', 0) or 0)
                 pending = data.get('pending') or []
@@ -248,11 +343,13 @@ ROUTING RULES
     def _save_digest(self):
         try:
             os.makedirs(os.path.dirname(self.digest_file), exist_ok=True)
-            with open(self.digest_file, 'w') as f:
+            tmp = self.digest_file + '.tmp'
+            with open(tmp, 'w') as f:
                 json.dump({'digest': self.digest_text,
                            'upto': self.digest_upto,
                            'pending': [list(p) for p in self._evicted_buffer]},
                           f, indent=2, ensure_ascii=False)
+            os.replace(tmp, self.digest_file)
         except Exception as e:
             print(f"Brain: Failed to save digest: {e}")
 
@@ -296,6 +393,56 @@ ROUTING RULES
         return ("RELEVANT KNOWLEDGE VAULT EXCERPTS (from your stored "
                 f"documents):\n{text[:1600]}")
 
+    def _rlm_block(self, prompt):
+        """
+        Recursive-memory recall for *prompt* under a watchdog: world
+        model, long-term themes, session summaries and relevant events
+        assembled across the RLM hierarchy.  '' when empty or slow.
+        """
+        try:
+            from utils.rlm import get_rlm
+            rlm = get_rlm()
+        except Exception as e:
+            print(f"Brain: RLM unavailable: {e}")
+            return ""
+        outcome = {}
+
+        def _fetch():
+            try:
+                outcome['text'] = rlm.recall_block(prompt)
+            except Exception as e:
+                outcome['error'] = str(e)
+
+        t = threading.Thread(target=_fetch, daemon=True,
+                             name="rlm-recall")
+        t.start()
+        t.join(timeout=self._VAULT_TIMEOUT)
+        if t.is_alive():
+            return ""
+        return outcome.get('text') or ''
+
+    def _rlm_continuity_block(self):
+        """
+        Cross-session bridge: where the last session left off (latest
+        summary + final exchanges), injected once per session when the
+        RLM detects an idle gap.  '' when the session is still warm.
+        """
+        try:
+            from utils.rlm import get_rlm
+            rlm = get_rlm()
+        except Exception as e:
+            print(f"Brain: RLM unavailable: {e}")
+            return ""
+        # Once per process; re-arm after 6h idle so a long-lived daemon
+        # also gets continuity after an overnight gap.
+        sent_at = getattr(self, '_continuity_sent_at', 0.0)
+        if sent_at and (time.time() - sent_at) < 6 * 3600:
+            return ""
+        block = rlm.continuity_block()
+        if block:
+            self._continuity_sent_at = time.time()
+        return block
+
     def _compress_history_if_needed(self):
         """
         Fold evicted exchanges (slid out of MAX_HISTORY) into a rolling
@@ -333,7 +480,15 @@ ROUTING RULES
         with self._digest_lock:
             self.digest_text = new_digest.strip()[:4000]
             self.digest_upto += len(batch)
-            self._evicted_buffer = []   # batch fully consumed
+            # Drop only the exchanges that were actually folded.  Items
+            # evicted while the LLM call was in flight (appended after
+            # the snapshot, still under the lock) must survive to be
+            # folded next round — wiping the whole buffer would silently
+            # erase them from the digest pipeline (they were already
+            # popped out of the history window).
+            folded = {id(x) for x in batch}
+            self._evicted_buffer = [
+                x for x in self._evicted_buffer if id(x) not in folded]
             self._save_digest()
             print(f"Brain: conversation digest updated "
                   f"(covers {self.digest_upto} exchanges total)")
@@ -369,6 +524,14 @@ ROUTING RULES
             from utils.transcript_search import get_archive
             get_archive().index_exchange(user_text, ai_text,
                                          source='chat')
+        except Exception:
+            pass
+        # RLM: observe the exchange into the recursive hierarchy; the
+        # memory itself decides (thresholds + cooldowns) whether to
+        # spawn background reflection/consolidation.  Never blocks.
+        try:
+            from utils.rlm import get_rlm
+            get_rlm().observe_exchange(user_text, ai_text, self)
         except Exception:
             pass
         # Log conversation topic to episodic memory for recall
@@ -720,15 +883,31 @@ ROUTING RULES
             return None
         try:
             import ast as _ast
-            node = _ast.parse(expr, mode='eval').body
+            tree = _ast.parse(expr, mode='eval')
             allowed = (_ast.Expression, _ast.BinOp, _ast.UnaryOp,
                        _ast.Constant, _ast.Add, _ast.Sub, _ast.Mult,
                        _ast.Div, _ast.USub, _ast.UAdd, _ast.Pow,
                        _ast.FloorDiv, _ast.Mod)
-            for n in _ast.walk(_ast.parse(expr, mode='eval')):
+            for n in _ast.walk(tree):
                 if not isinstance(n, allowed):
                     return None
-            val = eval(compile(_ast.Expression(node), '<math>', 'eval'),
+
+            # Exponent guard: a huge or nested ``**`` exponent would make
+            # eval materialise a multi-gigabyte bigint before returning —
+            # "9**99999999" or the nested "9**9**9" (= 9^387M) freeze the
+            # thread / OOM the process on a plain numeric prompt with zero
+            # LLM cost.  Only a small *integer-literal* exponent is
+            # permitted; anything else (nested power, huge exponent) falls
+            # back to the LLM, which is bounded by provider timeouts.
+            # NB: ast.walk yields the Pow *operator* node as well as the
+            # BinOp — the exponent lives on the BinOp (n.op is the Pow).
+            for n in _ast.walk(tree):
+                if isinstance(n, _ast.BinOp) and isinstance(n.op, _ast.Pow):
+                    exp = _int_literal(n.right)
+                    if exp is None or abs(exp) > _MAX_MATH_EXPONENT:
+                        return None
+
+            val = eval(compile(tree, '<math>', 'eval'),
                        {'__builtins__': {}}, {})
             out = f"{val:g}" if isinstance(val, float) else str(val)
             return f"{t} = {out}"
@@ -737,7 +916,12 @@ ROUTING RULES
 
     def think(self, prompt, image_path=None):
         if not self._llm_ready:
-            return {"action": "chat", "response": "I don't have a brain yet (Missing Groq API Key)."}
+            return {"action": "chat", "response":
+                    "I don't have a brain yet — no LLM provider is "
+                    "configured. Add any one key (Groq / Gemini / OpenAI / "
+                    "Anthropic / DeepSeek / OpenRouter), run a local "
+                    "Ollama/LM Studio server, or point CUSTOM_OPENAI_BASE_URL "
+                    "at your endpoint, then try again."}
 
         # Activity heartbeat — wakes idle hibernation if suspended
         try:
@@ -752,6 +936,15 @@ ROUTING RULES
             if quick:
                 print(f"Brain: local arithmetic → {quick}")
                 return {"action": "chat", "response": quick}
+        except Exception:
+            pass
+
+        # Dynamic context injection — expand @file / @folder / @git /
+        # @url markers natively before the prompt reaches any model
+        # (Hermes parity).  Idempotent, budget-capped, kill-switchable.
+        try:
+            from utils.context_injection import expand
+            prompt = expand(prompt)
         except Exception:
             pass
 
@@ -814,14 +1007,14 @@ ROUTING RULES
                 for k, v in self._memory_cache.items():
                     current_system_instruction += f"- {k}: {v}\n"
 
-            # Inject skill catalog — cached, refreshed every 60s
+            # Inject skill catalog — cached, refreshed every 60s.
+            # Uses the forge's MERGED catalog: legacy executable skills
+            # plus SKILL.md procedure skills (progressive disclosure —
+            # names + one-liners only, full body via read_skill).
             if not self._skills_cache or (time.time() - self._skills_cache_ts > 60):
                 try:
-                    from utils.skills import SkillRegistry
-                    if self._skills_registry is None:
-                        self._skills_registry = SkillRegistry()
-                    self._skills_cache = \
-                        self._skills_registry.render_catalog(max_chars=1500)
+                    from utils.skill_forge import render_catalog
+                    self._skills_cache = render_catalog(max_chars=1500)
                 except Exception:
                     self._skills_cache = ""
                 self._skills_cache_ts = time.time()
@@ -829,7 +1022,8 @@ ROUTING RULES
                 current_system_instruction += (
                     "\n\n" + self._skills_cache +
                     "\nIf the user's request matches a saved skill, prefer "
-                    "run_skill over writing new code."
+                    "run_skill (executable skills) or read_skill "
+                    "(procedures) over writing new code."
                 )
 
             # Inject external tool catalog — cached, refreshed every 60s
@@ -888,6 +1082,59 @@ ROUTING RULES
                 rel_context = self._relationships.get_context_for_prompt(max_chars=800)
                 if rel_context and len(rel_context) > 30:
                     current_system_instruction += f"\n\n{rel_context}"
+            except Exception:
+                pass
+
+            # Inject RLM recursive memory — cross-level recall of the
+            # user's history (world model, themes, sessions, events),
+            # watchdog-guarded so a slow index can never stall chat.
+            try:
+                rlm_block = self._rlm_block(prompt)
+                if rlm_block:
+                    current_system_instruction += f"\n\n{rlm_block}"
+            except Exception:
+                pass
+
+            # Session continuity: after an idle gap (or a restart) the
+            # RLM bridges to where the last session left off — once per
+            # session, re-armed after 6h so long-lived processes get it
+            # back after overnight idle.
+            try:
+                cont = self._rlm_continuity_block()
+                if cont:
+                    current_system_instruction += f"\n\n{cont}"
+            except Exception:
+                pass
+
+            # Inject guardrails — USER.md / MEMORY.md / .jarvis.md
+            # standing instructions (Hermes parity).  Cached internally.
+            try:
+                from utils.guardrails import get_guardrails
+                guardrail_block = get_guardrails().load_block()
+                if guardrail_block:
+                    current_system_instruction += f"\n\n{guardrail_block}"
+            except Exception:
+                pass
+
+            # Inject capability status so the LLM knows what it can/can't do
+            try:
+                from utils.capabilities import list_all, enabled as caps_enabled
+                if caps_enabled():
+                    caps = list_all()
+                    ready = [c['name'] for c in caps if c['status'] == 'ready']
+                    missing = [c['name'] for c in caps if c['status'] != 'ready']
+                    if ready or missing:
+                        cap_block = (
+                            f"\n\nCAPABILITIES — ready: "
+                            f"{', '.join(ready) or 'none'}\n"
+                            f"missing: {', '.join(missing) or 'none'}\n"
+                            f"Use capability_check to assess before "
+                            f"complex tasks. Use capability_expand to "
+                            f"create upgrade plans for missing ones. "
+                            f"JARVIS_AUTO_UPGRADE=1 enables auto-install "
+                            f"of pip packages."
+                        )
+                        current_system_instruction += cap_block
             except Exception:
                 pass
             

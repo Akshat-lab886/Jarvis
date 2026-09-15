@@ -3,11 +3,11 @@ Jarvis Integration Gateway (Event Bus)
 ======================================
 
 Normalizes every inbound channel — dashboard, Telegram text/voice/
-photo, HTTP webhooks — into ONE internal event shape before it reaches
-the agent core:
+photo, HTTP webhooks, paired mobile devices — into ONE internal event
+shape before it reaches the agent core:
 
     InternalEvent {
-        id, source ('dashboard'|'telegram'|'webhook'|'voice'),
+        id, source ('dashboard'|'telegram'|'webhook'|'mobile'|'voice'),
         kind   ('text'|'voice_transcript'|'photo'|'json'),
         text, meta {…}, reply(callable), created
     }
@@ -72,6 +72,11 @@ class EventBus:
         self._recent = []              # small ring for diagnostics
         self.webhook_key = os.getenv('JARVIS_WEBHOOK_KEY', '')
         self._lock = threading.Lock()
+        # Cap concurrent background handler threads so a flood of
+        # wait=false events (webhook/voice/telegram) can't spawn an
+        # unbounded number of LLM-driving threads (memory/CPU/cost
+        # exhaustion).  Saturated events are answered "busy" and dropped.
+        self._bg_slots = threading.BoundedSemaphore(8)
 
     # ------------------------------------------------------------------ #
     # Normalizers
@@ -98,6 +103,14 @@ class EventBus:
                              meta={'chat_id': chat_id,
                                    'image_path': image_path},
                              reply=reply)
+
+    @staticmethod
+    def from_mobile_text(text, device_id=None, reply=None):
+        # Paired phone (Jarvis Lite).  Untrusted origin: the server
+        # pipeline stamps _origin='mobile:<device>' so destructive
+        # actions always hold for a human on the dashboard.
+        return InternalEvent('mobile', 'text', text,
+                             meta={'device_id': device_id}, reply=reply)
 
     @staticmethod
     def from_webhook(payload, reply=None):
@@ -156,7 +169,20 @@ class EventBus:
             return result
 
         if background:
-            threading.Thread(target=_run, daemon=True,
+            if not self._bg_slots.acquire(blocking=False):
+                logger.warning("event %s: background pipeline saturated — "
+                               "dropping (busy reply sent)", event.id)
+                event.respond("Jarvis is handling several requests at once — "
+                              "please try again in a moment.")
+                return None
+
+            def _bg():
+                try:
+                    _run()
+                finally:
+                    self._bg_slots.release()
+
+            threading.Thread(target=_bg, daemon=True,
                              name=f"evt-{event.source}").start()
             return None
         return _run()
