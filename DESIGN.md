@@ -1,9 +1,9 @@
-# JARVIS UI — DESIGN LAW (OPS DECK v5)
+# JARVIS UI — DESIGN LAW (OPS DECK v5 · PARCHMENT)
 
 > This file is binding. Any UI change MUST pass the audit in §7 before
-> it ships. The aesthetic: **amber-phosphor operations console** — a
-> purpose-built instrument in the Bloomberg Terminal tradition, not a
-> consumer dashboard.
+> it ships. The aesthetic: **brown & white parchment operations
+> console** — a paper-ledger instrument in the Bloomberg Terminal
+> tradition, not a consumer dashboard.
 
 ## 1 · Concept
 
@@ -14,17 +14,17 @@ screen is always live, always dense, always left-aligned.
 ## 2 · Tokens (locked)
 
 ```css
-/* surfaces */
---bg-0:#050607  --bg-1:#0B0D0F  --bg-2:#111417  --bg-3:#171B20
---bg-hover:#1E242B
+/* surfaces — PARCHMENT (default): brown & white ops console */
+--bg-0:#E8E0D0  --bg-1:#F2ECE0  --bg-2:#FFFFFF  --bg-3:#E3D8C1
+--bg-hover:#EFE6D2
 /* lines — shared 1px collapsed borders, never gaps+cards */
---line:#1E252D  --line-strong:#333D48
+--line:#3A2C1C  --line-soft:#CDBFA5  --line-strong:#2B1E12
 /* ink */
---text-1:#E8EAED  --text-2:#98A2AD  --text-3:#5A636D
-/* signal */
---accent:#FFB000  --accent-dim:rgba(255,176,0,.10)
---accent-line:rgba(255,176,0,.35)
---ok:#3FC874  --warn:#FFB000  --fail:#FF5D5D
+--text-1:#2B1E12  --text-2:#5C4A33  --text-3:#8A7660
+/* signal — coffee-brown accent, tan fills; green/red for ok/fail only */
+--accent:#6B4A26  --accent-dim:rgba(107,74,38,.10)
+--accent-line:rgba(107,74,38,.50)
+--ok:#2F7A44  --warn:#8A5A12  --fail:#B3402E
 /* geometry */
 --r:0            /* ZERO radius. No exceptions. */
 /* type */
@@ -99,31 +99,31 @@ command line (auto) | log ticker
 
 ## 8 · Palette law
 
-Amber on near-black is THE identity (Bloomberg's signature). State
-colors: green=ok, amber=warn/active, red=fail. Themes swap ONLY the
-accent hue (command=phosphor green #37E06E, brutalist=#FF4747,
-zen=#B9A6FF, vault=#5AB8FF). Never introduce a second decorative hue.
+Brown & white parchment is THE identity — a paper-ledger console, not
+a neon terminal. State colors: green=ok, coffee-brown=warn/active,
+oxide-red=fail. There is exactly one theme: parchment. The theme
+switcher is deleted; no alternate accent hues ship. Never introduce a
+second decorative hue.
 
 ## 9 · CINEMATIC LAYER (v6 — HOLO-DECK)
 
 The console earns a cinematic layer BECAUSE it is disciplined. These
 are the ONLY ornamental devices allowed, everywhere else stays strict:
 
-1. **HERO GAUGE** — a 190px triple-arc reactor (CPU/RAM/DISK arcs,
-   amber core) is the transcript's idle centerpiece. It shows real
-   live values. It hides once conversation flows (>2 messages).
-   Glow permitted HERE only: ≤ `0 0 18px rgba(255,176,0,.18)`.
-2. **VIGNETTE** — body background: radial gradient
-   `radial-gradient(1200px at 50% 40%, #0C0F13, #050607)`. Never flat.
-3. **SCANLINES** — fixed overlay, 2px repeat at 2.5% white. Subtle
-   materiality. Never animated.
-4. **CORNER BRACKETS** — 4 fixed HUD frame brackets (amber 35%,
-   18×18 L-shapes) at viewport corners.
+1. **HERO GAUGE** — a compact triple-arc dial (CPU/RAM/DISK arcs,
+   coffee-brown core) is the transcript's idle centerpiece. It shows
+   real live values. It hides once conversation flows (>2 messages).
+   Glow permitted HERE only: ≤ `0 0 10px rgba(107,74,38,.18)`.
+2. **GRID PAPER** — body background: beige `#E8E0D0` with a faint
+   coffee grid (`rgba(107,74,38,.055)`, 28px). Ledger feel, never flat.
+3. **SCANLINES** — removed with the dark theme (no overlay on paper).
+4. **CORNER BRACKETS** — removed with the dark theme (no HUD chrome
+   on paper; desktop keeps none, mobile keeps none).
 5. **WAVEFORM** — 24-bar live strip in the transcript header. Bars
-   2px, amber-dim, animated at ~12fps via rAF (cheap). Represents
+   2px, coffee-dim, animated at ~12fps via rAF (cheap). Represents
    audio state; idle = low noise floor.
-6. **BIG NUMERALS** — vital values render 22px mono amber; labels 9px.
-   The rail reads as instrumentation, not a table.
+6. **BIG NUMERALS** — vital values render 22px mono coffee-brown;
+   labels 9px. The rail reads as instrumentation, not a table.
 
 Everything in §1–§8 still applies. Glow on anything other than the
 hero/core = violation. Gradients other than the vignette = violation.

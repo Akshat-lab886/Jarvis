@@ -16,12 +16,9 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const panelBackdrop = document.getElementById('panel-backdrop');
 
-// --- THEME: parchment (brown/white) is the default console skin ---
-// The #theme-switcher node stays in the DOM for compat but is hidden by
-// CSS. This keeps the old `jarvis-theme` localStorage read harmless so
-// returning clients never error. Body always resolves to theme-parchment.
-const themeSwitcher = document.getElementById('theme-switcher');
-const themeDots = themeSwitcher ? themeSwitcher.querySelectorAll('.theme-dot') : [];
+// --- THEME: parchment (brown/white) is the only console skin ---
+// No switcher ships. This keeps the body class pinned and migrates any
+// stale `jarvis-theme` localStorage value from the retired dark themes.
 
 function applyTheme(theme) {
     try {
@@ -31,21 +28,11 @@ function applyTheme(theme) {
         document.body.classList.add('theme-parchment');
     } catch (e) { /* non-fatal: theme is cosmetic */ }
     try {
-        if (theme) localStorage.setItem('jarvis-theme', 'parchment');
+        localStorage.setItem('jarvis-theme', 'parchment');
     } catch (e) { /* private-mode storage may throw */ }
-    if (themeDots && themeDots.forEach) {
-        themeDots.forEach(d => d.classList.toggle('active',
-            d.dataset && d.dataset.theme === 'midnight'));
-    }
 }
 
-if (themeDots && themeDots.forEach) {
-    themeDots.forEach(dot => {
-        dot.addEventListener('click', () => applyTheme('parchment'));
-    });
-}
-
-// Restore saved theme on load (always resolves to the single theme)
+// Single theme: pin parchment on load (migrates stale dark-theme values)
 try { applyTheme(localStorage.getItem('jarvis-theme') || 'parchment'); }
 catch (e) { applyTheme('parchment'); }
 
