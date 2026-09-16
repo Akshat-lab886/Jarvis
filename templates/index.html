@@ -7,11 +7,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=33">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=35">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
-<body>
+<body class="theme-parchment">
 <div class="panel-backdrop" id="panel-backdrop"></div>
 <div class="hud-frame" id="hud-frame"><span></span><span></span><span></span><span></span></div>
 
@@ -125,8 +125,8 @@
         <div class="hero" id="hero">
             <div class="hero-card">
                 <div class="hero-greet" id="hero-greet">Good evening, Sir</div>
-                <div class="gauge">
-                    <svg viewBox="0 0 190 190" width="190" height="190">
+                <div class="gauge gauge-sm">
+                    <svg viewBox="0 0 190 190" width="68" height="68">
                         <circle class="track" cx="95" cy="95" r="86"/>
                         <circle class="track" cx="95" cy="95" r="72"/>
                         <circle class="track" cx="95" cy="95" r="58"/>
@@ -439,6 +439,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=32"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=35"></script>
 </body>
 </html>

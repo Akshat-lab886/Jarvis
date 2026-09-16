@@ -1003,19 +1003,20 @@ code {
     .feed-scroll, .feed-head { padding-left: 18px; padding-right: 18px; }
 }
 @media (max-width: 720px) {
-    .container { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0,1fr) auto auto; grid-template-areas: "strip" "side" "feed" "cmd" "ops"; }
-    .sidebar { flex-direction: row; align-items: center; padding: 8px 10px; border-right: none; border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
-    .brand { padding: 0 8px 0 0; }
-    .brand-name { display: none; }
-    .fnav { flex-direction: row; align-items: center; overflow: visible; }
-    .fnav-label { display: none; }
-    .fnav button { width: auto; padding: 7px 10px; font-size: 11px; }
-    .fnav button i { display: none; }
-    .side-foot { display: none; }
+    .container { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; grid-template-areas: "strip" "feed" "cmd" "ops"; overflow: visible; height: auto; min-height: 100vh; }
+    body { overflow: auto; }
+    .sidebar { display: none; }
     .strip { padding: 0 12px; flex-wrap: nowrap; overflow-x: auto; }
     .hide-sm, .top-search { display: none; }
-    .ops { max-height: 42vh; flex-direction: column; flex-wrap: nowrap; }
+    .ops { max-height: none; flex-direction: column; flex-wrap: nowrap; overflow: visible; }
     .ops-body { max-height: 30vh; }
+    .feed { overflow: visible; }
+    .feed-head { position: static; background: none; }
+    .feed-scroll { justify-content: flex-start; }
+    .hud-frame { display: none; }
+    /* keep desktop grid-stack order on mobile: strip/feed/cmd/ops */
+    .cmdzone { order: 3; }
+    .ops { order: 4; }
     .cmdzone { padding: 10px 12px; }
     .gauge { width: 104px; height: 104px; }
     .gread b { font-size: 23px; }
@@ -1684,10 +1685,8 @@ code { background: rgba(255,176,0,.07); }
 .ops-stack { border-radius: 0; }
 .ops-head { padding: 8px 12px; }
 .ops-body { padding: 2px 0 4px; }
-.ops-body 
-#stack-approvals .ops-body 
-.row { border-bottom: 1px solid var(--line-soft); }
-.row:last-child { border-bottom: none; }
+.ops-body .row { border-bottom: 1px solid var(--line-soft); }
+.ops-body .row:last-child { border-bottom: none; }
 
 /* — command: centred, calm, focused — */
 .cmdzone { padding: 10px 18px 14px; }
@@ -1695,3 +1694,299 @@ code { background: rgba(255,176,0,.07); }
 .cmd input::placeholder { color: #4E5560; }
 .ticker { width: 200px; opacity: .6; font-size: 11px; }
 .ticker .tline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ════════════════════════════════════════════════════════════════════╗
+   v34 ORGANISED MINIMAL III (CSS-only, IDs frozen)
+   "Cheap" tells left after v33: zero-radius boxes everywhere, raw
+   3-letter codes glued to full labels, two dangling `.ops-body`
+   selectors corrupting the mobile-link rules, invalid box-shadow
+   declarations, oversized hero chrome. Modern-minimal fix: subtle
+   radius, badge+label nav via data-code, repaired selectors,
+   slimmer hero, round status dots. No HTML/JS touched.
+   ╚═══════════════════════════════════════════════════════════════════ */
+
+/* — repair v25/v32: dangling `.ops-body` merged into the next rule's
+     selector list; re-declare plainly so both parse paths agree — */
+.ops-body .mob-qr img, .mob-qr img,
+.ops-body .mob-qr canvas, .mob-qr canvas {
+    width: 140px; height: 140px; background: #fff;
+    padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+}
+.ops-body .mob-code, .mob-code { margin: 8px 12px; }
+
+/* — invalid `box-shadow: card-lift removed ***` declarations are
+     dropped by the parser; make the flat intent explicit — */
+.msg, .msg.j, .msg.intro, .cmd, .cmd:focus-within,
+.ops-stack, #stack-approvals, .ticker, .chip,
+.aut-add button, #send-btn, .d-btn.primary, .hero-card {
+    box-shadow: none;
+}
+
+/* — subtle radius: restrained, modern — */
+.hero-card, .msg:not(.u):not(.sys), .ops-stack, .drawer,
+.toast, .reminder-toast, .palette, .arg-dialog, .terminal-box,
+.cmd, .top-search, input, select, .d-btn, .tbtn,
+.hero-chips button, .mob-code, .llm-fleet, .rlm-row,
+.meet-transcript, .upload-area, .aut-add button, #send-btn,
+#mic-btn, .ticker, .strip-vitals, #status.pill, .strip-cell.pill {
+    border-radius: 8px;
+}
+.msg.u, .msg.sys { border-radius: 0; }
+.cmd { border-radius: 10px; }
+.hero-card { border-radius: 10px; }
+
+/* — status dots go round — */
+.strip .dot, .ops-dot, .live-dot, .ticker .tick-dot,
+.hstatus-pill .pulse, .gcore { border-radius: 50%; }
+
+/* — sidebar: badge + label via data-code; raw text hidden — */
+.fnav button { font-size: 0; gap: 8px; letter-spacing: 0; }
+.fnav button::before {
+    content: attr(data-code);
+    font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+    letter-spacing: .08em; color: var(--text-3);
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--line-soft); border-radius: 5px;
+    padding: 3px 6px; flex: none;
+}
+.fnav button::after { font-size: 12.5px; }
+.fnav button:hover::before { color: var(--text-2); border-color: var(--line-strong); }
+.fnav button.active::before {
+    color: var(--accent); border-color: var(--accent-line);
+    background: var(--accent-dim);
+}
+.brand-mark { border-radius: 8px; }
+
+/* — topbar: calmer single row — */
+.strip { gap: 12px; }
+.strip-cell.hide-md, .strip-cell.hide-sm { opacity: .55; }
+#status.pill, .strip-cell.pill { font-size: 11.5px; }
+.top-search { min-width: 170px; }
+
+/* — hero: slimmer empty-state — */
+.hero { padding: 10px 28px 6px; }
+.hero-card { max-width: 620px; padding: 12px 16px; column-gap: 16px; }
+.hero-greet { font-size: 17px; }
+.hero-card .gauge { width: 56px; height: 56px; }
+.gread b { font-size: 15px; }
+.gread span { font-size: 7px; }
+.hstatus-pill { font-size: 9.5px; }
+.hero-chips { margin-top: 10px; gap: 6px; }
+.hero-chips button { font-size: 11px; padding: 5px 10px; }
+
+/* — feed + rail rhythm — */
+.feed-scroll { max-width: 680px; gap: 8px; }
+.msg { padding: 10px 14px; }
+.ops { gap: 10px; }
+.ops-head { padding: 8px 12px; }
+.row { padding: 8px 12px; }
+
+/* — command stays centred and calm — */
+.cmdzone { padding: 10px 18px 14px; }
+.cmd { max-width: 680px; }
+.cmd input { height: 38px; }
+
+/* — collapsed + mobile nav: badges only, then raw codes — */
+@media (max-width: 1080px) {
+    .fnav button { justify-content: center; font-size: 0; padding: 8px 0; }
+    .fnav button::after { display: none; }
+    .fnav button::before { margin: 0; }
+}
+@media (max-width: 720px) {
+    .fnav button { font-size: 11px; width: auto; }
+    .fnav button::before, .fnav button::after { display: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════╗
+   v35 PARCHMENT — brown & white ops console (default theme)
+   Structure from neobrutalism/RetroUI refs, palette translated:
+   beige page + white surfaces + espresso borders + tan fills.
+   Dark :root tokens above stay as fallback; everything below wins
+   by order + specificity under body.theme-parchment. No HTML/JS ids
+   touched. Zero radius restored (overrides v34 rounding).
+   ╚═══════════════════════════════════════════════════════════════════ */
+body.theme-parchment {
+    color-scheme: light;
+    --bg-0: #E8E0D0;
+    --bg-1: #F2ECE0;
+    --bg-2: #FFFFFF;
+    --bg-3: #E3D8C1;
+    --card: #FFFFFF;
+    --card-2: #F6F0E2;
+    --line: #3A2C1C;
+    --line-soft: #CDBFA5;
+    --line-strong: #2B1E12;
+    --text-1: #2B1E12;
+    --text-2: #5C4A33;
+    --text-3: #8A7660;
+    --accent: #6B4A26;
+    --accent-hi: #4A3016;
+    --accent-ink: #FFFFFF;
+    --accent-dim: rgba(107,74,38,.10);
+    --accent-line: rgba(107,74,38,.50);
+    --accent-glow: rgba(107,74,38,.18);
+    --ok: #2F7A44;
+    --ok-dim: rgba(47,122,68,.12);
+    --fail: #B3402E;
+    --fail-dim: rgba(179,64,46,.12);
+    --warn: #8A5A12;
+    --warn-dim: rgba(138,90,18,.12);
+    --drawer-shadow: 0 10px 30px rgba(43,30,18,.20);
+    background-color: #E8E0D0;
+    background-image:
+        linear-gradient(rgba(107,74,38,.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(107,74,38,.055) 1px, transparent 1px);
+    background-size: 28px 28px;
+    color: var(--text-1);
+}
+body.theme-parchment ::selection { background: rgba(107,74,38,.24); color: #2B1E12; }
+body.theme-parchment ::-webkit-scrollbar-thumb { background: #BFAE90; border: 2px solid var(--bg-0); }
+body.theme-parchment ::-webkit-scrollbar-thumb:hover { background: #A89476; }
+
+/* — zero radius restored (v34 gave 8–10px + round dots) — */
+body.theme-parchment .hero-card, body.theme-parchment .msg,
+body.theme-parchment .ops-stack, body.theme-parchment .drawer,
+body.theme-parchment .toast, body.theme-parchment .reminder-toast,
+body.theme-parchment .palette, body.theme-parchment .arg-dialog,
+body.theme-parchment .terminal-box, body.theme-parchment .cmd,
+body.theme-parchment .top-search, body.theme-parchment input,
+body.theme-parchment select, body.theme-parchment .d-btn,
+body.theme-parchment .tbtn, body.theme-parchment .hero-chips button,
+body.theme-parchment .mob-code, body.theme-parchment .llm-fleet,
+body.theme-parchment .rlm-row, body.theme-parchment .meet-transcript,
+body.theme-parchment .upload-area, body.theme-parchment .aut-add button,
+body.theme-parchment #send-btn, body.theme-parchment #mic-btn,
+body.theme-parchment .ticker, body.theme-parchment .strip-vitals,
+body.theme-parchment #status.pill, body.theme-parchment .strip-cell.pill,
+body.theme-parchment .brand-mark, body.theme-parchment .mob-qr img,
+body.theme-parchment .mob-qr canvas, body.theme-parchment .strip .dot,
+body.theme-parchment .ops-dot, body.theme-parchment .live-dot,
+body.theme-parchment .ticker .tick-dot, body.theme-parchment .hstatus-pill .pulse,
+body.theme-parchment .gcore { border-radius: 0 !important; }
+body.theme-parchment .fnav button::before { border-radius: 0; }
+
+/* — chrome: white rails on beige page, no blur/glass — */
+body.theme-parchment .sidebar,
+body.theme-parchment .strip,
+body.theme-parchment .ops,
+body.theme-parchment .cmdzone {
+    background: var(--bg-2);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+body.theme-parchment .sidebar { border-right: 1px solid var(--line-soft); background-image: none; }
+body.theme-parchment .strip { border-bottom: 1px solid var(--line-soft); }
+body.theme-parchment .ops { border-left: 1px solid var(--line-soft); }
+body.theme-parchment .cmdzone { border-top: 1px solid var(--line-soft); }
+body.theme-parchment .feed-head { background: linear-gradient(var(--bg-0) 72%, transparent); }
+body.theme-parchment .strip .lbl.jarvis-label { color: var(--text-1); }
+
+/* — sidebar nav: espresso badges, tan active — */
+body.theme-parchment .fnav-label { color: var(--text-3); }
+body.theme-parchment .fnav button { color: var(--text-2); }
+body.theme-parchment .fnav button::before {
+    background: var(--bg-2); border-color: var(--line-soft); color: var(--text-3);
+}
+body.theme-parchment .fnav button:hover { background: rgba(107,74,38,.07); color: var(--text-1); }
+body.theme-parchment .fnav button:hover::before { color: var(--text-2); border-color: var(--line); }
+body.theme-parchment .fnav button.active {
+    background: var(--accent-dim); border-color: var(--accent-line);
+    box-shadow: none; color: var(--text-1);
+}
+body.theme-parchment .fnav button.active::before {
+    color: var(--accent-hi); border-color: var(--accent-line); background: var(--bg-2);
+}
+body.theme-parchment .fnav button i { background: var(--bg-1); border-color: var(--line-soft); color: var(--text-3); }
+body.theme-parchment .fnav button.active i { color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim); }
+body.theme-parchment .brand-mark { box-shadow: none; border: 1px solid var(--accent-hi); }
+body.theme-parchment .side-foot { border-top-color: var(--line-soft); }
+body.theme-parchment .side-foot a { background: var(--bg-2); border-color: var(--line-soft); }
+body.theme-parchment .side-foot a:hover { border-color: var(--accent-line); background: var(--accent-dim); }
+
+/* — strip pills: white boxes, hairline borders — */
+body.theme-parchment #status.pill, body.theme-parchment .strip-cell.pill,
+body.theme-parchment .strip-vitals, body.theme-parchment .top-search {
+    background: var(--bg-2); box-shadow: none;
+}
+body.theme-parchment .top-search:hover { background: var(--bg-1); }
+
+/* — hero: white card, brown arcs, no amber glow art — */
+body.theme-parchment .hero-card { background: var(--bg-2); border-color: var(--line-soft); box-shadow: none; }
+body.theme-parchment .hero-card::before { background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+body.theme-parchment .hero-card::after { background: none; }
+body.theme-parchment .gauge circle.track { stroke: var(--line-soft); }
+body.theme-parchment .gauge .arc-cpu { filter: none; }
+body.theme-parchment .gauge .arc-ram { stroke: #A08A64; }
+body.theme-parchment .gcore { box-shadow: 0 0 10px var(--accent-glow); }
+body.theme-parchment .hstatus-pill { background: var(--bg-1); border-color: var(--line-soft); box-shadow: none; }
+body.theme-parchment .hero-chips button { background: var(--bg-2); box-shadow: none; }
+body.theme-parchment .hero-chips button:hover {
+    transform: none; box-shadow: none;
+    color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim);
+}
+
+/* — messages: white cards on beige, espresso hairlines — */
+body.theme-parchment .msg { background: var(--bg-2); border-color: var(--line-soft); box-shadow: none; }
+body.theme-parchment .msg.j { background: var(--bg-2); border-color: var(--line-soft); box-shadow: none; }
+body.theme-parchment .msg.u { background: var(--bg-1); border-color: var(--line-soft); }
+body.theme-parchment .msg.intro { background: var(--accent-dim); border-color: var(--accent-line); box-shadow: none; }
+body.theme-parchment .msg .body { color: var(--text-2); }
+body.theme-parchment .msg.j .body, body.theme-parchment .msg.u .body,
+body.theme-parchment .msg .body.prose, body.theme-parchment .msg.intro .body { color: var(--text-1); }
+
+/* — ops rail rows: brown-tint hovers, tan fills — */
+body.theme-parchment .ops-head { background: var(--bg-1); }
+body.theme-parchment .ops-stack:hover { border-color: var(--line-soft); }
+body.theme-parchment #stack-approvals { border-color: var(--accent-line); box-shadow: none; }
+body.theme-parchment .row:hover, body.theme-parchment .mission summary:hover,
+body.theme-parchment .drow:hover, body.theme-parchment .prov-row:hover,
+body.theme-parchment .task-item:hover, body.theme-parchment .note-item:hover,
+body.theme-parchment .memory-item:hover, body.theme-parchment .file-item:hover,
+body.theme-parchment .person-card:hover { background: rgba(107,74,38,.07); border-color: var(--line-soft); }
+body.theme-parchment .msum { background: var(--bg-1); border-color: var(--line-soft); }
+body.theme-parchment .aut-add { background: var(--bg-1); }
+
+/* — command + ticker — */
+body.theme-parchment .cmd { background: var(--bg-2); border-color: var(--line-strong); box-shadow: none; }
+body.theme-parchment .cmd:focus-within { box-shadow: 0 0 0 3px var(--accent-dim); }
+body.theme-parchment .ticker { background: var(--bg-2); box-shadow: none; opacity: 1; }
+
+/* — hero gauge: force compact 64px layout (base 190px leaks into greet) — */
+body.theme-parchment .gauge, body.theme-parchment .gauge-sm { width: 64px; height: 64px; flex: none; }
+body.theme-parchment .gauge svg, body.theme-parchment .gauge-sm svg { width: 64px; height: 64px; }
+body.theme-parchment .gauge circle.track, body.theme-parchment .gauge circle.arc { stroke-width: 9; }
+body.theme-parchment .gread b { font-size: 15px; }
+body.theme-parchment .gread span { font-size: 6px; letter-spacing: .14em; }
+body.theme-parchment .hero-card { flex-direction: row; flex-wrap: wrap; align-items: center; text-align: left; gap: 8px 18px; }
+body.theme-parchment .hero-greet { flex: 1 1 auto; margin-bottom: 0; text-align: left; }
+body.theme-parchment .hstatus-pill { margin-top: 0; }
+body.theme-parchment .hero-chips { justify-content: flex-start; width: 100%; }
+
+/* — capabilities rows: text chips replace emoji, cap-name ellipsis — */
+body.theme-parchment .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.theme-parchment .row .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+body.theme-parchment .ops-body { min-width: 0; }
+
+/* — inputs/buttons/chips/tabs: RetroUItan-button recipe in brown — */
+body.theme-parchment input, body.theme-parchment select { background: var(--bg-2); }
+body.theme-parchment .d-btn { background: var(--bg-1); }
+body.theme-parchment .d-btn:hover { background: var(--bg-3); border-color: var(--line); color: var(--text-1); }
+body.theme-parchment .d-btn.primary:hover { background: var(--accent); }
+body.theme-parchment .tabs { background: var(--bg-1); }
+body.theme-parchment .tab.active { background: var(--bg-2); box-shadow: none; }
+body.theme-parchment .chip { background: var(--bg-1); }
+body.theme-parchment .d-head { background: var(--bg-1); }
+body.theme-parchment .d-close:hover { background: rgba(107,74,38,.10); }
+body.theme-parchment .meet-transcript { background: var(--bg-1); }
+body.theme-parchment .upload-area { background: var(--bg-1); }
+body.theme-parchment .rlm-row { background: var(--bg-1); }
+body.theme-parchment .llm-fleet { background: var(--bg-1); }
+
+/* — overlays: white sheets on warm dim, no blur — */
+body.theme-parchment .drawer { background: var(--bg-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.theme-parchment .toast { background: var(--bg-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.theme-parchment .reminder-toast { background: var(--bg-2); }
+body.theme-parchment .terminal-box { background: var(--bg-2); }
+body.theme-parchment .palette li.sel .code { background: var(--accent-dim); }
+body.theme-parchment .panel-backdrop { background: rgba(43,30,18,.45); backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.theme-parchment .palette-backdrop { background: rgba(43,30,18,.45); backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); backdrop-filter: none; -webkit-backdrop-filter: none; }

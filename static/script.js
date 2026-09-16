@@ -16,10 +16,10 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const panelBackdrop = document.getElementById('panel-backdrop');
 
-// --- THEME: single polished ops-console theme (switcher retired) ---
+// --- THEME: parchment (brown/white) is the default console skin ---
 // The #theme-switcher node stays in the DOM for compat but is hidden by
-// CSS. This no-op keeps the old `jarvis-theme` localStorage read harmless
-// so returning clients never error, without swapping body classes.
+// CSS. This keeps the old `jarvis-theme` localStorage read harmless so
+// returning clients never error. Body always resolves to theme-parchment.
 const themeSwitcher = document.getElementById('theme-switcher');
 const themeDots = themeSwitcher ? themeSwitcher.querySelectorAll('.theme-dot') : [];
 
@@ -28,10 +28,10 @@ function applyTheme(theme) {
         document.body.classList.remove(
             'theme-midnight', 'theme-command', 'theme-brutalist',
             'theme-zen', 'theme-vault');
-        document.body.removeAttribute('class');
+        document.body.classList.add('theme-parchment');
     } catch (e) { /* non-fatal: theme is cosmetic */ }
     try {
-        if (theme) localStorage.setItem('jarvis-theme', 'midnight');
+        if (theme) localStorage.setItem('jarvis-theme', 'parchment');
     } catch (e) { /* private-mode storage may throw */ }
     if (themeDots && themeDots.forEach) {
         themeDots.forEach(d => d.classList.toggle('active',
@@ -41,13 +41,13 @@ function applyTheme(theme) {
 
 if (themeDots && themeDots.forEach) {
     themeDots.forEach(dot => {
-        dot.addEventListener('click', () => applyTheme('midnight'));
+        dot.addEventListener('click', () => applyTheme('parchment'));
     });
 }
 
 // Restore saved theme on load (always resolves to the single theme)
-try { applyTheme(localStorage.getItem('jarvis-theme') || 'midnight'); }
-catch (e) { applyTheme('midnight'); }
+try { applyTheme(localStorage.getItem('jarvis-theme') || 'parchment'); }
+catch (e) { applyTheme('parchment'); }
 
 // Instant HUD Clock — strip + rail
 function updateHUDClock() {
@@ -1992,7 +1992,7 @@ if (studyBtn) {
         for (const [cat, items] of Object.entries(grouped)) {
             html += `<div class="cap-cat">${escapeHtml(cat.toUpperCase())}</div>`;
             items.forEach(c => {
-                const icon = c.status === 'ready' ? '✅' : c.status === 'degraded' ? '⚠️' : '❌';
+                const icon = c.status === 'ready' ? '[ OK ]' : c.status === 'degraded' ? '[WARN]' : '[FAIL]';
                 const acquireBtn = c.status !== 'ready'
                     ? ` <button class="tbtn cap-acquire" data-cap="${escapeHtml(c.name)}">ACQUIRE</button>`
                     : '';
