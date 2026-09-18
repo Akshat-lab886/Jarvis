@@ -93,9 +93,9 @@ function doSync(silent) {
       cursor = (j.cursor != null ? j.cursor : cursor);
       (j.events || []).forEach(function (e) {
         var t = (e.type || ''), p = e.payload || {};
-        var line = t === 'memory.remember' ? '✎ ' + (p.text || '').slice(0, 140)
-          : t === 'memory.forget' ? '⌫ forget: ' + ((p.keyword || p.memory_id || '') + '').slice(0, 100)
-          : '• ' + t;
+        var line = t === 'memory.remember' ? '[NOTE] ' + (p.text || '').slice(0, 140)
+          : t === 'memory.forget' ? '[FORGET] ' + ((p.keyword || p.memory_id || '') + '').slice(0, 100)
+          : '· ' + t;
         var he = $('hub-events'), d = document.createElement('div');
         d.className = 'he'; d.textContent = line;
         he.prepend(d);
@@ -130,7 +130,7 @@ function saveNote(text) {
   outbox.push({ id: uuid(), type: 'memory.remember',
     payload: { text: text, category: 'note', tags: ['mobile'], importance: 5 } });
   persist(); cursorLine();
-  bubble('you', '✎ ' + text);
+  bubble('you', '[NOTE] ' + text);
   bubble('jarvis', outbox.length === 1 ? 'queued offline — hit SYNC to push' : outbox.length + ' notes queued — hit SYNC to push');
 }
 

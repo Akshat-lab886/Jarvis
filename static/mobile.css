@@ -1,10 +1,13 @@
-/* JARVIS LITE · mobile PWA — dark ops-deck, thumb-first */
+/* JARVIS LITE · mobile PWA — parchment ledger, thumb-first
+   Flat beige (no grid), zero radius, mono, coffee accent.
+   Tokens mirror desktop v36 parchment. */
 :root {
-  --bg-0:#050607; --bg-1:#0B0D0F; --bg-2:#111417;
-  --line:#1E252D; --line-strong:#333D48;
-  --text-1:#E8EAED; --text-2:#98A2AD; --text-3:#5A636D;
-  --accent:#FFB000; --accent-dim:rgba(255,176,0,.10);
-  --ok:#3FC874; --fail:#FF5D5D;
+  --bg-0:#E8E0D0; --bg-1:#FFFFFF; --bg-2:#F2ECE0;
+  --line:#3A2C1C; --line-soft:#CDBFA5; --line-strong:#2B1E12;
+  --text-1:#2B1E12; --text-2:#5C4A33; --text-3:#8A7660;
+  --accent:#6B4A26; --accent-hi:#4A3016; --accent-ink:#FFFFFF;
+  --accent-dim:rgba(107,74,38,.10); --accent-line:rgba(107,74,38,.50);
+  --ok:#2F7A44; --fail:#B3402E; --warn:#8A5A12;
   --font:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -19,38 +22,40 @@ body {
   padding:12px 16px; background:var(--bg-1); border-bottom:1px solid var(--line-strong);
   font-size:12px; letter-spacing:.14em;
 }
-.top .dot { width:8px; height:8px; border-radius:50%; background:var(--text-3); }
+.top .dot { width:8px; height:8px; border-radius:0; background:var(--text-3); }
 .top .dot.on { background:var(--ok); }
-.top .title { font-weight:600; }
+.top .title { font-weight:600; color:var(--accent-hi); }
 .top .stat { margin-left:auto; color:var(--text-3); font-size:11px; }
 .top .stat.on { color:var(--ok); }
 
 .card { margin:16px; padding:18px 16px; background:var(--bg-1);
   border:1px solid var(--line); }
-.card h1 { font-size:13px; letter-spacing:.16em; color:var(--accent); margin-bottom:8px; }
+.card h1 { font-size:13px; letter-spacing:.16em; color:var(--accent-hi); margin-bottom:8px; }
 .hint { color:var(--text-3); font-size:12px; margin:8px 0; }
 label { display:block; font-size:10px; letter-spacing:.14em; color:var(--text-2);
   margin:12px 0 4px; }
 input {
-  width:100%; background:var(--bg-0); border:1px solid var(--line-strong);
+  width:100%; background:var(--bg-1); border:1px solid var(--line-strong);
   color:var(--text-1); font-family:inherit; font-size:16px; padding:12px 10px;
+  border-radius:0;
 }
-input:focus { outline:none; border-color:var(--accent); }
+input::placeholder { color:var(--text-3); }
+input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
 #code { text-transform:uppercase; letter-spacing:.3em; font-size:20px; text-align:center; }
 button {
   font-family:inherit; font-size:12px; letter-spacing:.1em; cursor:pointer;
-  background:transparent; border:1px solid var(--line-strong); color:var(--text-2);
-  padding:12px 14px; margin-top:12px; min-height:44px;
+  background:var(--bg-2); border:1px solid var(--line-strong); color:var(--text-1);
+  padding:12px 14px; margin-top:12px; min-height:44px; border-radius:0;
 }
-button.primary { border-color:var(--accent); color:var(--accent);
-  background:var(--accent-dim); width:100%; }
-button.danger { border-color:var(--fail); color:var(--fail); }
+button.primary { border-color:var(--accent); color:var(--accent-ink);
+  background:var(--accent); width:100%; }
+button.danger { border-color:var(--fail); color:var(--fail); background:var(--bg-1); }
 .err { color:var(--fail); font-size:12px; margin-top:10px; min-height:18px; }
 
 #msgs { padding:12px 12px 4px; display:flex; flex-direction:column; gap:8px; }
 .msg { padding:10px 12px; border:1px solid var(--line); background:var(--bg-1);
-  white-space:pre-wrap; word-break:break-word; font-size:14px; }
-.msg.me { border-color:var(--accent-line, #333D48); align-self:flex-end;
+  white-space:pre-wrap; word-break:break-word; font-size:14px; color:var(--text-1); }
+.msg.me { border-color:var(--line-strong); align-self:flex-end;
   background:var(--bg-2); max-width:88%; }
 .msg.jarvis { align-self:flex-start; max-width:92%; }
 .msg .who { display:block; font-size:9px; letter-spacing:.16em; color:var(--text-3);
@@ -65,7 +70,7 @@ button.danger { border-color:var(--fail); color:var(--fail); }
 }
 .bar input { flex:1; }
 .bar button { margin-top:0; width:auto; }
-.bar #send { border-color:var(--accent); color:var(--accent); }
+.bar #send { border-color:var(--accent); color:var(--accent-ink); background:var(--accent); }
 
 .more { margin:8px 12px 24px; border:1px solid var(--line); background:var(--bg-1); }
 .more summary { padding:12px; font-size:11px; letter-spacing:.12em; color:var(--text-2);

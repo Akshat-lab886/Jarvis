@@ -1,7 +1,7 @@
 /* Jarvis Lite service worker — cache-first shell, never cache API.
    Version the cache name on shell changes; old caches are purged on activate. */
-var CACHE = 'jarvis-lite-v2';
-var SHELL = ['/mobile', '/static/mobile.css', '/static/mobile.js',
+var CACHE = 'jarvis-lite-v3';
+var SHELL = ['/mobile', '/static/mobile.css?v=2', '/static/mobile.js?v=2',
              '/static/icon.svg', '/mobile-manifest.json'];
 
 self.addEventListener('install', function (e) {
