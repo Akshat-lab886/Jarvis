@@ -1177,6 +1177,55 @@ def upload_file():
         return jsonify({'success': True, 'message': 'File uploaded successfully',
                         'filename': safe_name}), 200
 
+@app.route('/api/vision', methods=['POST'])
+def api_vision():
+    """Describe an image using a vision-capable model from the fleet.
+
+    Accepts JSON: ``{"image": "<data:image/png;base64,...> | /static/foo.png>",
+    "prompt": "<optional instructions>"}``. Routes through the router with
+    ``require={'vision'}`` so it lands on a vision model (e.g. Mimo 2.5, Gemini,
+    Claude). Returns ``{"ok": true, "text": ...}``.
+    """
+    import base64 as _b64
+    try:
+        body = request.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+    image = (body.get('image') or '').strip()
+    prompt = (body.get('prompt') or '').strip() or \
+        'Describe exactly what is visible in this image in a few clear sentences.'
+    if not image:
+        return jsonify({'ok': False, 'error': 'No image provided'}), 400
+
+    data_url = image
+    if image.startswith('/'):
+        # Served static path -> turn into a data URL
+        rel = image.lstrip('/')
+        if rel.startswith('static/'):
+            rel = rel[len('static/'):]
+        p = os.path.join(app.static_folder, rel.split('?')[0])
+        if not os.path.exists(p):
+            return jsonify({'ok': False, 'error': 'Image not found'}), 404
+        mime = 'image/png' if p.lower().endswith('.png') else 'image/jpeg'
+        with open(p, 'rb') as fh:
+            data_url = f"data:{mime};base64,{_b64.b64encode(fh.read()).decode()}"
+
+    if not data_url.startswith('data:image'):
+        return jsonify({'ok': False, 'error': 'Unsupported image source'}), 400
+
+    from utils.llm import get_router
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]}]
+    try:
+        result = get_router().chat(messages, require={'vision'}, max_tokens=400)
+        text = (result.text or '').strip() or '(vision model returned no text)'
+        return jsonify({'ok': True, 'text': text,
+                        'provider': result.provider, 'model': result.model})
+    except Exception as exc:  # noqa: BLE001 — surface fleet failures to the UI
+        return jsonify({'ok': False, 'error': str(exc)[:400]}), 502
+
 @app.route('/upload_knowledge', methods=['POST'])
 def upload_knowledge():
     from werkzeug.utils import secure_filename

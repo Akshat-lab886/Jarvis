@@ -624,6 +624,9 @@ socket.on('photo_taken', (data) => {
         img.src = data.photo_url + '?t=' + data.timestamp;
         photoFrame.classList.add('has-photo');
     }
+
+    // Remember the latest capture so VIS can analyze it.
+    if (data && data.photo_url) _lastImage = data.photo_url;
 });
 
 // Capture button click handler
@@ -633,6 +636,40 @@ if (captureBtn) {
         socket.emit('user_input', { text: 'take a photo' });
     });
 }
+
+// --- VISION (route an image to a vision model: Mimo 2.5 / Gemini / Claude) ---
+let _lastImage = '';            // data URL or served path of last photo
+// Ask the server to describe an image through the vision-capable fleet.
+window.runVision = function (imageSrc, prompt, onDone) {
+    if (!imageSrc) {
+        addMessage('JARVIS: [ERR] No image to look at — capture or upload one first.');
+        return;
+    }
+    addMessage('SYSTEM: ANALYSING IMAGE VIA VISION MODEL…');
+    updateStatus('Vision Analysing…');
+    const body = { image: imageSrc, prompt: prompt || '' };
+    fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(resp => resp.json())
+        .then(data => {
+            updateStatus('Systems Nominal');
+            if (data.ok) {
+                addMessage(`JARVIS: ${data.text}`);
+                setCoreState('speaking');
+            } else {
+                addMessage(`JARVIS: [ERR] ${data.error || 'vision request failed'}`);
+            }
+            if (onDone) onDone(data);
+        })
+        .catch(err => {
+            updateStatus('Systems Nominal');
+            addMessage(`JARVIS: [ERR] ${String(err && err.message || err)}`);
+        });
+};
+window.visionLast = function () { return _lastImage; };
 
 // Upload button handling
 const uploadBtn = document.getElementById('upload-btn');
@@ -671,6 +708,14 @@ if (uploadBtn && fileInput) {
                         // Force reload with timestamp
                         img.src = '/static/webcam_capture.jpg?t=' + new Date().getTime();
                         photoFrame.classList.add('has-photo');
+                    }
+
+                    // Track the new image and auto-describe it via vision.
+                    _lastImage = (data && data.filename)
+                        ? '/static/' + data.filename : '/static/webcam_capture.jpg';
+                    if (window.runVision) {
+                        window.runVision(_lastImage,
+                            'Describe this uploaded image in a few clear sentences.');
                     }
                 })
                 .catch(error => {
@@ -808,9 +853,15 @@ function processCommand(text) {
 // --- VISION BUTTON ---
 visionBtn.addEventListener('click', () => {
     wakeUp(); // Button manually wakes him up
-    addMessage("Initiating Visual Scan...");
-    updateStatus("Vision Active");
-    socket.emit('process_text', { text: "look at this" });
+    // Route the current photo (uploaded or captured) to a vision model.
+    const target = _lastImage || '/static/webcam_capture.jpg';
+    if (window.runVision) {
+        window.runVision(target,
+            'Describe exactly what is visible in this image in a few clear sentences.');
+    } else {
+        addMessage("Initiating Visual Scan...");
+        socket.emit('process_text', { text: "look at this" });
+    }
 });
 
 // --- DEV MODE BUTTON ---
