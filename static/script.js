@@ -258,9 +258,104 @@ socket.on('audio', (data) => {
 
 // When audio finishes, go back to listening
 audioPlayer.addEventListener('ended', () => {
+    voiceBSet({ mode: 'listen', text: _vbText });
     setCoreState('active');
     updateStatus("LISTENING");
 });
+
+// --- VOICE TALK MODE B — retro vector-arcade overlay (front-end only) ---
+const _vb = {
+    el: document.getElementById('voice-b'),
+    state: document.getElementById('vb-state'),
+    clock: document.getElementById('vb-clock'),
+    trace: document.getElementById('vb-trace'),
+    grid: document.querySelector('#vb-scope .vb-grid'),
+    readout: document.getElementById('vb-readout'),
+    cursor: document.getElementById('vb-cursor'),
+    mode: 'off',                 // off | listen | think | speak
+    pts: 96, n: 0, speaking: false,
+};
+const _vbText = {};
+
+// Build the scope grid lines once (reused across resizes).
+function _vbBuildGrid() {
+    if (!_vb.grid || _vb.grid.childElementCount) return;
+    const W = 640, H = 200, step = 40;
+    let s = '';
+    for (let x = 0; x <= W; x += step) s += `<line x1="${x}" y1="0" x2="${x}" y2="${H}"/>`;
+    for (let y = 0; y <= H; y += step) s += `<line x1="0" y1="${y}" x2="${W}" y2="${y}"/>`;
+    _vb.grid.innerHTML = s;
+}
+
+// Drive the oscilloscope trace. listen = low noise, speak/think = big sweep.
+function _vbDraw(now) {
+    if (_vb.mode === 'off' || !_vb.trace) return;
+    const dt = now / 1000;
+    const sw = 640, sh = 200;
+    const amp = (_vb.mode === 'speak' || _vb.mode === 'think') ? 72 : 16;
+    const base = sh / 2;
+    const drag = 3.2;                 // vector-sweep drag
+    let pts = '';
+    for (let i = 0; i < _vb.pts; i++) {
+        const x = (i / (_vb.pts - 1)) * sw;
+        let y = base;
+        if (_vb.mode === 'listen') {
+            y = base + Math.sin(dt * 2.4 + i * 0.5) * 6
+                  + Math.sin(dt * 5.1 + i * 1.1) * 3;
+            y = Math.max(base - amp, Math.min(base + amp, y));
+        } else {
+            // Lissajous-style vector sweep (speaking = energetic)
+            y = base + Math.sin(dt * 3.1 + i * 0.28) * amp
+                  + Math.sin(dt * 7.4 + i * 0.9) * (amp * 0.42);
+        }
+        y = Math.max(4, Math.min(sh - 4, y));
+        pts += (i ? ' ' : '') + x.toFixed(1) + ',' + y.toFixed(1);
+        if (i > drag && _vb.mode === 'speak') {
+            // trailing neon trail: nothing extra — thick trace reads as arcade
+        }
+    }
+    _vb.trace.setAttribute('points', pts);
+}
+
+// Keep the HUD clock ticking while the overlay is live.
+function _vbClock() {
+    if (_vb.mode === 'off' || !_vb.clock) return;
+    const t = new Date().toLocaleTimeString('en-US', { hour12: false });
+    if (_vb.clock) _vb.clock.textContent = t;
+}
+
+// Public: enter / leave / drive the overlay. Stoops via _vb.mode + rAF.
+window.voiceBSet = function (cfg) {
+    if (!_vb.el) return;
+    if (cfg.mode === 'off') {
+        _vb.mode = 'off';
+        _vb.el.classList.remove('active');
+        _vb.el.setAttribute('aria-hidden', 'true');
+        return;
+    }
+    _vb.mode = cfg.mode;
+    if (cfg.text) { _vbText.text = cfg.text; _vb.readout.textContent = cfg.text; }
+    if (cfg.chip) _vb.state.textContent = cfg.chip;
+    _vb.el.classList.add('active');
+    _vb.el.setAttribute('aria-hidden', 'false');
+    _vbBuildGrid();
+};
+
+// Hook into TAKE-OVER: when TALK is pressed, open the overlay.
+(function () {
+    _vbBuildGrid();
+    const drawLoop = () => {
+        _vbDraw(performance.now());
+        _vbClock();
+        if (_vb.mode !== 'off') requestAnimationFrame(drawLoop);
+    };
+    if (_vb.el) {
+        _vb.el.addEventListener('click', (e) => {
+            if (e.target.closest('#vb-dismiss')) { voiceStop(); voiceBSet({ mode: 'off' }); }
+        });
+        drawLoop();
+    }
+})();
 
 // System Vitals real-time updates + sparklines
 const _sparkCpu = [];
@@ -611,6 +706,12 @@ if (SpeechRecognition) {
 }
 
 function processCommand(text) {
+    // VOICE TALK MODE B: show what was heard + enter THINKING.
+    if (window.voiceBSet && _vb.mode === 'listen') {
+        _vb.readout.textContent = (text || '').toUpperCase() + ' ▮';
+        _vb.state.textContent = '[ THINKING ]';
+        _vb.mode = 'think';
+    }
     addMessage(`YOU: ${text}`);
     socket.emit('process_text', { text: text });
     setCoreState('processing');
@@ -1554,6 +1655,8 @@ function _micClear() {
 }
 function voiceStop() {
     try { if (recognition) recognition.stop(); } catch (_) {}
+    // VOICE TALK MODE B: leaving voice mode closes the arcade overlay.
+    if (window.voiceBSet) voiceBSet({ mode: 'off' });
 }
 function voiceStart() {
     if (!recognition) {
@@ -1565,6 +1668,8 @@ function voiceStart() {
     _micClear();
     const btn = document.getElementById('mic-btn');
     if (btn) btn.classList.add('listening');
+    // VOICE TALK MODE B: open the arcade overlay while the mic is live.
+    if (window.voiceBSet) voiceBSet({ mode: 'listen', chip: '[ LISTENING ]', text: 'SPEAK, SIR.' });
     try {
         recognition.start();
     } catch (e) {
@@ -1600,6 +1705,16 @@ if (recognition) {
 
 function setCoreState(state) {
     // States: idle, active (listening), speaking, processing
+    // VOICE TALK MODE B: mirror the console state into the arcade overlay.
+    if (window.voiceBSet && _vb.mode !== 'off') {
+        if (state === 'speaking' || state === 'processing') {
+            _vb.mode = 'speak';
+            _vb.state.textContent = '[ SPEAKING ]';
+        } else if (state === 'active') {
+            _vb.mode = 'listen';
+            _vb.state.textContent = '[ LISTENING ]';
+        }
+    }
     const dial = core ? core.closest('.reactor') : null;
     if (!dial) return;
     dial.classList.remove('listening', 'speaking');

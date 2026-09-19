@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=36">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=37">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -418,6 +418,27 @@
         <div class="term-body"></div>
     </div>
     <div class="mobile-mic-btn" id="mobile-mic-btn" title="Listen for a command (browser voice)" aria-label="Voice command">Talk</div>
+
+    <!-- ═══ VOICE TALK MODE B — retro vector-arcade full-takeover ═══ -->
+    <div class="voice-b" id="voice-b" aria-hidden="true">
+        <i class="vb-c tl"></i><i class="vb-c tr"></i><i class="vb-c bl"></i><i class="vb-c br"></i>
+        <div class="vb-inner">
+            <div class="vb-head">
+                <span class="vb-chip" id="vb-state">[ IDLE ]</span>
+                <span class="vb-time num" id="vb-clock">--:--:--</span>
+            </div>
+            <div class="vb-stage">
+                <svg class="vb-scope" id="vb-scope" viewBox="0 0 640 200" preserveAspectRatio="none" aria-hidden="true">
+                    <g class="vb-grid"></g>
+                    <polyline class="vb-trace" id="vb-trace" points="" fill="none"/>
+                </svg>
+                <div class="vb-cursor" id="vb-cursor">▮</div>
+            </div>
+            <div class="vb-readout" id="vb-readout">SPEAK, SIR.</div>
+            <button class="vb-dismiss" id="vb-dismiss" title="Exit voice mode">[ CANCEL ]</button>
+        </div>
+    </div>
+
 </div>
 
 <audio id="audio-player" style="display:none;"></audio>
@@ -431,6 +452,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=36"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=37"></script>
 </body>
 </html>
