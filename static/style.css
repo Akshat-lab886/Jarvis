@@ -1861,7 +1861,19 @@ body.theme-parchment .brand-mark, body.theme-parchment .mob-qr img,
 body.theme-parchment .mob-qr canvas, body.theme-parchment .strip .dot,
 body.theme-parchment .ops-dot, body.theme-parchment .live-dot,
 body.theme-parchment .ticker .tick-dot, body.theme-parchment .hstatus-pill .pulse,
-body.theme-parchment .gcore { border-radius: 0 !important; }
+body.theme-parchment .gcore,
+body.theme-parchment .hero-card, body.theme-parchment .msg,
+body.theme-parchment .ops-stack, body.theme-parchment .cmd,
+body.theme-parchment .drawer, body.theme-parchment .toast,
+body.theme-parchment .palette, body.theme-parchment .arg-dialog,
+body.theme-parchment .terminal-box, body.theme-parchment .top-search,
+body.theme-parchment input, body.theme-parchment select,
+body.theme-parchment .d-btn, body.theme-parchment .tbtn,
+body.theme-parchment .hero-chips button, body.theme-parchment .mob-code,
+body.theme-parchment .llm-fleet, body.theme-parchment .rlm-row,
+body.theme-parchment .meet-transcript, body.theme-parchment .upload-area,
+body.theme-parchment .aut-add button, body.theme-parchment #send-btn,
+body.theme-parchment #mic-btn { border-radius: 0 !important; }
 body.theme-parchment .fnav button::before { border-radius: 0; }
 
 /* — chrome: white rails on beige page, no blur/glass — */
