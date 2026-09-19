@@ -229,8 +229,18 @@ code {
 .fnav button.active i { color: var(--accent); border-color: var(--accent-line); background: rgba(255,176,0,.12); }
 .fnav .sep { display: none; }
 .side-foot { padding: 12px 8px 2px; border-top: 1px solid var(--line-soft); }
-.side-foot a { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; color: var(--text-3); }
+.side-foot a {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    letter-spacing: .16em; color: var(--text-2);
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 8px; width: 100%;
+}
+.side-foot .sf-kbd {
+    font-size: 10px; color: var(--accent-hi); flex: none;
+    border: 1px solid var(--line-soft); padding: 0 4px;
+}
 .side-foot a:hover { color: var(--accent-hi); text-decoration: none; }
+.side-foot a:hover .sf-kbd { border-color: var(--accent-line); background: var(--accent-dim); }
 
 /* ── TOPBAR ─────────────────────────────────────────────────────── */
 .strip {
@@ -1892,8 +1902,8 @@ body.theme-parchment .feed-head { background: linear-gradient(var(--bg-0) 72%, t
 body.theme-parchment .strip .lbl.jarvis-label { color: var(--text-1); }
 
 /* — sidebar nav: espresso badges, tan active — */
-body.theme-parchment .fnav-label { color: var(--text-3); }
-body.theme-parchment .fnav button { color: var(--text-2); }
+body.theme-parchment .fnav-label { color: var(--text-3); padding: 16px 12px 7px; }
+body.theme-parchment .fnav button { color: var(--text-2); padding: 8px 11px; }
 body.theme-parchment .fnav button::before {
     background: var(--bg-2); border-color: var(--line-soft); color: var(--text-3);
 }
