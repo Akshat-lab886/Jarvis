@@ -1989,6 +1989,36 @@ body.theme-parchment .hero-greet { flex: 1 1 auto; margin-bottom: 0; text-align:
 body.theme-parchment .hstatus-pill { margin-top: 0; }
 body.theme-parchment .hero-chips { justify-content: flex-start; width: 100%; }
 
+/* — hero instrument refit: meta band, greeting, tools row — */
+body.theme-parchment .hero-card {
+    position: relative;
+    align-items: stretch; flex-direction: column; gap: 0;
+    padding: 20px 24px 18px;
+    max-width: 760px;
+    overflow: hidden;
+}
+body.theme-parchment .hero-meta {
+    display: flex; align-items: center; gap: 12px;
+    padding-bottom: 12px; margin-bottom: 12px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+body.theme-parchment .hm-id { font-size: 13px; font-weight: 650; color: var(--text-1); letter-spacing: .06em; }
+body.theme-parchment .hm-lbl { font-size: 9px; font-weight: 600; letter-spacing: .18em; color: var(--text-3); text-transform: uppercase; margin-left: auto; }
+body.theme-parchment .hm-dot { width: 7px; height: 7px; background: var(--ok); flex: none; }
+body.theme-parchment .hero-greet { font-size: 24px; font-weight: 700; letter-spacing: -.01em; line-height: 1.08; }
+body.theme-parchment .hero-sub { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; color: var(--text-3); margin: 4px 0 0; }
+body.theme-parchment .hero-rule { height: 1px; background: var(--line-soft); margin: 16px 0 14px; }
+body.theme-parchment .hero-tools { display: flex; align-items: center; gap: 20px; }
+body.theme-parchment .hero-tools .wordmark,
+body.theme-parchment .hero-tools .hstatus-pill { margin: 0; }
+body.theme-parchment .hero-tools .wordmark { text-indent: 0; }
+body.theme-parchment .hero { align-items: stretch; padding: 18px 28px 6px; }
+body.theme-parchment .hero-band {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent-hi); opacity: .9;
+}
+
 /* — capabilities rows: text chips replace emoji, cap-name ellipsis — */
 body.theme-parchment .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.theme-parchment .row .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
@@ -2097,11 +2127,15 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
 .vb-grid line { stroke: rgba(107,74,38,.09); stroke-width: 1; }
 .vb-trace {
     stroke: var(--accent-hi); stroke-width: 2.5;
-    stroke-linecap: square; stroke-linejoin: miter;
+    stroke-linecap: square; stroke-linejoin: bevel;
 }
 .vb-trace-ghost {
-    stroke: var(--accent-dim, rgba(107,74,38,.14)); stroke-width: 5;
-    stroke-linecap: square; stroke-linejoin: miter;
+    stroke: var(--accent-dim, rgba(107,74,38,.18)); stroke-width: 4;
+    stroke-linecap: square; stroke-linejoin: bevel;
+}
+.vb-sweep {
+    stroke: var(--accent-hi); stroke-width: 1; opacity: .45;
+    stroke-dasharray: 3 5; pointer-events: none;
 }
 .vb-cursor {
     position: absolute; left: 50%; top: 18%; transform: translateX(-50%);

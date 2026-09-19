@@ -42,9 +42,11 @@ function updateHUDClock() {
     const vt = document.getElementById('vitals-time');
     const sc = document.getElementById('strip-clock');
     const rc = document.getElementById('rail-clock');
+    const hc = document.getElementById('hero-clock');
     if (vt) vt.textContent = t;
     if (sc) sc.textContent = t;
     if (rc) rc.textContent = t;
+    if (hc) hc.textContent = t;
 }
 setInterval(updateHUDClock, 1000);
 updateHUDClock();
@@ -270,6 +272,7 @@ const _vb = {
     clock: document.getElementById('vb-clock'),
     trace: document.getElementById('vb-trace'),
     traceGhost: document.getElementById('vb-trace-ghost'),
+    sweep: document.getElementById('vb-sweep'),
     grid: document.querySelector('#vb-scope .vb-grid'),
     readout: document.getElementById('vb-readout'),
     cursor: document.getElementById('vb-cursor'),
@@ -279,7 +282,7 @@ const _vb = {
     memBar: document.getElementById('vb-mem-bar'),
     link: document.getElementById('vb-link'),
     mode: 'off',                 // off | listen | think | speak
-    pts: 96, n: 0, speaking: false, ghost: null,
+    pts: 96, n: 0, speaking: false, ghost: null, ampProbe: () => 16,
 };
 const _vbText = {};
 
@@ -293,41 +296,82 @@ function _vbBuildGrid() {
     _vb.grid.innerHTML = s;
 }
 
-// Sample one sweep, return the point string. amp governs energy.
-function _vbSample(dt, amp) {
-    const sw = 640, sh = 200, base = sh / 2;
+// Voice scope engine — a TRUE scrolling oscilloscope.
+// Samples flow in from the right edge and scroll left (a rolling buffer),
+// so the trace visibly sweeps across the stage instead of wobbling in place.
+const _vbBuf = [];          // rolling y-values (oldest at index 0)
+const _vbAmp = { cur: 16, tgt: 16 };  // eased amplitude envelope
+const _vbPts = {};          // memoized point-string per frame
+
+// Push one new sample height for the current time.
+function _vbPushSample(dt, t) {
+    const base = 100, sh = 200;
+    let y;
+    if (_vb.mode === 'listen') {
+        // Idle: low-noise floor with a soft metabolic wobble.
+        y = base + Math.sin(dt * 2.4 + t * 0.9) * 5
+              + Math.sin(dt * 5.1 + t * 1.7) * 2.5;
+    } else {
+        // Active: rich speech-like waveform.
+        y = base + Math.sin(dt * 3.1 + t * 1.1) * _vb.ampProbe()
+              + Math.sin(dt * 7.4 + t * 2.3 + Math.sin(dt * 0.6)) * (_vb.ampProbe() * 0.45);
+    }
+    y = Math.max(6, Math.min(sh - 6, y));
+    _vbBuf.push(y);
+    if (_vbBuf.length > _vb.pts) _vbBuf.shift();
+}
+_vb.ampProbe = () => _vbAmp.cur;
+
+// Ease the amplitude toward its target so mode changes "swell" smoothly.
+function _vbTickAmp() {
+    const k = 0.16;
+    _vbAmp.cur += (_vbAmp.tgt - _vbAmp.cur) * k;
+    if (Math.abs(_vbAmp.tgt - _vbAmp.cur) < 0.3) _vbAmp.cur = _vbAmp.tgt;
+    _vbAmp.cur /= 1.002; // gentle decay so speak settles
+}
+
+// Set the target amplitude for the current mode, with a one-time swell on speak.
+function _vbSyncAmp() {
+    const tgt = (_vb.mode === 'speak' || _vb.mode === 'think') ? 72 : 16;
+    if (tgt > _vbAmp.tgt) _vbAmp.tgt = tgt * 1.25; // overshoot then settle
+    else _vbAmp.tgt = tgt;
+}
+
+// Build the point string for the current rolling buffer.
+function _vbRender(buf) {
+    const sw = 640, sh = 200;
+    const n = buf.length;
+    if (!n) return '';
     let pts = '';
-    for (let i = 0; i < _vb.pts; i++) {
+    for (let i = 0; i < n; i++) {
         const x = (i / (_vb.pts - 1)) * sw;
-        let y;
-        if (_vb.mode === 'listen') {
-            y = base + Math.sin(dt * 2.4 + i * 0.5) * 6
-                  + Math.sin(dt * 5.1 + i * 1.1) * 3;
-        } else {
-            y = base + Math.sin(dt * 3.1 + i * 0.28) * amp
-                  + Math.sin(dt * 7.4 + i * 0.9) * (amp * 0.42);
-        }
-        y = Math.max(4, Math.min(sh - 4, y));
-        pts += (i ? ' ' : '') + x.toFixed(1) + ',' + y.toFixed(1);
+        pts += (i ? ' ' : '') + x.toFixed(1) + ',' + buf[i].toFixed(1);
     }
     return pts;
 }
 
-// Drive the oscilloscope trace. Main + ghost trail; sweep lags a beat.
+// Drive the scope each frame: push samples, ease amplitude, redraw.
 function _vbDraw(now) {
     if (_vb.mode === 'off' || !_vb.trace) return;
     const dt = now / 1000;
-    const amp = (_vb.mode === 'speak' || _vb.mode === 'think') ? 72 : 16;
-    const pts = _vbSample(dt, amp);
+    _vbTickAmp();
+    // Push 2 fresh samples per frame for visible leftward scroll.
+    _vbPushSample(dt, now * 0.001);
+    _vbPushSample(dt, now * 0.001 + 0.05);
+    const pts = _vbRender(_vbBuf);
     _vb.trace.setAttribute('points', pts);
     if (_vb.traceGhost) {
-        // Ghost lags one beat for a smooth phosphor trail effect.
-        let ghost;
-        if (_vb.ghost == null) ghost = pts;
-        else ghost = _vbSample(Math.max(0, dt - 0.14), amp);
-        _vb.traceGhost.setAttribute('points', ghost);
-        _vb.ghost = pts;
+        // Ghost lags by half the buffer for a phosphor trail behind the wave.
+        const half = Math.max(0, _vbBuf.length - Math.floor(_vb.pts * 0.28));
+        _vb.traceGhost.setAttribute('points', _vbRender(_vbBuf.slice(0, half)));
         _vb.traceGhost.style.opacity = '1';
+    }
+    // Sweep cursor: a vertical read line that glides right, then resets (vector scope).
+    if (_vb.sweep) {
+        const p = (now % 1100) / 1100;
+        _vb.sweep.setAttribute('x1', String(p * 640));
+        _vb.sweep.setAttribute('x2', String(p * 640));
+        _vb.sweep.setAttribute('opacity', String(0.5 - Math.abs(p - 0.5)));
     }
 }
 
@@ -355,12 +399,15 @@ window.voiceBSet = function (cfg) {
     if (!_vb.el) return;
     if (cfg.mode === 'off') {
         _vb.mode = 'off';
+        _vbAmp.tgt = 16; _vbAmp.cur = 16;
+        _vbBuf.length = 0;
         _vb.el.classList.remove('active');
         _vb.el.setAttribute('aria-hidden', 'true');
         if (_vbVitTimer) { clearInterval(_vbVitTimer); _vbVitTimer = null; }
         return;
     }
     _vb.mode = cfg.mode;
+    _vbSyncAmp();
     if (cfg.text) { _vbText.text = cfg.text; if (_vb.readout) _vb.readout.textContent = cfg.text; }
     if (cfg.chip && _vb.state) _vb.state.textContent = cfg.chip;
     // Tint the state chip: speaking = ok/green, else coffee accent.
@@ -748,6 +795,7 @@ function processCommand(text) {
         if (_vb.readout) _vb.readout.textContent = (text || '').toUpperCase() + ' ▮';
         if (_vb.state) { _vb.state.textContent = '[ THINKING ]'; _vb.state.classList.remove('speak'); }
         _vb.mode = 'think';
+        _vbSyncAmp();
     }
     addMessage(`YOU: ${text}`);
     socket.emit('process_text', { text: text });
@@ -1746,9 +1794,11 @@ function setCoreState(state) {
     if (window.voiceBSet && _vb.mode !== 'off') {
         if (state === 'speaking' || state === 'processing') {
             _vb.mode = 'speak';
+            _vbSyncAmp();
             if (_vb.state) { _vb.state.textContent = '[ SPEAKING ]'; _vb.state.classList.add('speak'); }
         } else if (state === 'active') {
             _vb.mode = 'listen';
+            _vbSyncAmp();
             if (_vb.state) { _vb.state.textContent = '[ LISTENING ]'; _vb.state.classList.remove('speak'); }
         }
     }

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=41">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=44">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -116,21 +116,31 @@
           </div>
         <div class="hero" id="hero">
             <div class="hero-card">
-                <div class="hero-greet" id="hero-greet">Good evening, Sir</div>
-                <div class="gauge gauge-sm">
-                    <svg viewBox="0 0 190 190" width="68" height="68">
-                        <circle class="track" cx="95" cy="95" r="86"/>
-                        <circle class="track" cx="95" cy="95" r="72"/>
-                        <circle class="track" cx="95" cy="95" r="58"/>
-                        <circle class="arc arc-cpu" id="arc-cpu" cx="95" cy="95" r="86"/>
-                        <circle class="arc arc-ram" id="arc-ram" cx="95" cy="95" r="72"/>
-                        <circle class="arc arc-dsk" id="arc-dsk" cx="95" cy="95" r="58"/>
-                    </svg>
-                    <div class="gread"><b id="hero-cpu">0</b><span>SYSTEM LOAD</span></div>
-                    <div class="gcore"></div>
+                <div class="hero-band"></div>
+                <div class="hero-meta">
+                    <span class="hm-id num" id="hero-clock">--:--:--</span>
+                    <span class="hm-lbl">PERSONAL ASSISTANT · SECURE LINK</span>
+                    <span class="hm-dot"></span>
                 </div>
-                <div class="wordmark">Jarvis</div>
-                <div class="hstatus-pill"><span class="pulse"></span><span class="hstatus" id="hero-status">ALL SYSTEMS NOMINAL</span></div>
+                <div class="hero-greet" id="hero-greet">Good evening, Sir</div>
+                <p class="hero-sub" id="hero-sub">Ops console ready. All systems nominal.</p>
+                <div class="hero-rule"></div>
+                <div class="hero-tools">
+                    <div class="gauge gauge-sm">
+                        <svg viewBox="0 0 190 190" width="68" height="68">
+                            <circle class="track" cx="95" cy="95" r="86"/>
+                            <circle class="track" cx="95" cy="95" r="72"/>
+                            <circle class="track" cx="95" cy="95" r="58"/>
+                            <circle class="arc arc-cpu" id="arc-cpu" cx="95" cy="95" r="86"/>
+                            <circle class="arc arc-ram" id="arc-ram" cx="95" cy="95" r="72"/>
+                            <circle class="arc arc-dsk" id="arc-dsk" cx="95" cy="95" r="58"/>
+                        </svg>
+                        <div class="gread"><b id="hero-cpu">0</b><span>SYSTEM LOAD</span></div>
+                        <div class="gcore"></div>
+                    </div>
+                    <div class="wordmark">Jarvis</div>
+                    <div class="hstatus-pill"><span class="pulse"></span><span class="hstatus" id="hero-status">ALL SYSTEMS NOMINAL</span></div>
+                </div>
                 <div class="hero-chips">
                     <button onclick="quickPrompt('summarize my day')"><b>SYS</b><span>SUMMARY</span></button>
                     <button onclick="quickPrompt('show my missions')"><b>MIS</b><span>ACTIVE</span></button>
@@ -436,6 +446,7 @@
                 <svg class="vb-scope" id="vb-scope" viewBox="0 0 640 200" preserveAspectRatio="none" aria-hidden="true">
                     <g class="vb-grid"></g>
                     <polyline class="vb-trace-ghost" id="vb-trace-ghost" points="" fill="none"/>
+                    <line class="vb-sweep" id="vb-sweep" y1="0" y2="200" x1="0" x2="0" stroke="var(--accent-hi)"/>
                     <polyline class="vb-trace" id="vb-trace" points="" fill="none"/>
                 </svg>
                 <div class="vb-cursor" id="vb-cursor">▮</div>
@@ -461,6 +472,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=41"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=44"></script>
 </body>
 </html>
