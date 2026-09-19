@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=38">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=39">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -132,9 +132,9 @@
                 <div class="wordmark">Jarvis</div>
                 <div class="hstatus-pill"><span class="pulse"></span><span class="hstatus" id="hero-status">ALL SYSTEMS NOMINAL</span></div>
                 <div class="hero-chips">
-                    <button onclick="quickPrompt('summarize my day')">Summarize my day</button>
-                    <button onclick="quickPrompt('show my missions')">Show missions</button>
-                    <button onclick="quickPrompt('check system health')">Check systems</button>
+                    <button onclick="quickPrompt('summarize my day')"><b>SYS</b><span>SUMMARY</span></button>
+                    <button onclick="quickPrompt('show my missions')"><b>MIS</b><span>ACTIVE</span></button>
+                    <button onclick="quickPrompt('check system health')"><b>HLT</b><span>CHECK</span></button>
                 </div>
             </div>
         </div>
@@ -461,6 +461,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=38"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=39"></script>
 </body>
 </html>

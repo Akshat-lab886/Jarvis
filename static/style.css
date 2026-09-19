@@ -360,11 +360,20 @@ code {
 .hstatus-pill .hstatus { margin-top: 0; }
 .hero-chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 16px; }
 .hero-chips button {
-    font-size: 12px; font-weight: 500; color: var(--text-2);
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 0; padding: 7px 15px;
-    transition: all 0ms;
+    display: inline-flex; align-items: baseline; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    padding: 8px 12px; border-radius: 0;
+    background: var(--bg-2); color: var(--text-2);
+    border: 1px solid var(--line-soft); cursor: pointer;
+    transition: background 0ms, color 0ms, border-color 0ms;
 }
+.hero-chips button b {
+    font-weight: 700; color: var(--accent);
+    width: 34px; flex: none; text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+.hero-chips button span { color: var(--text-2); }
 .hero-chips button:hover { color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim); }
 .live-dot {
     display: inline-block; width: 6px; height: 6px; border-radius: 0;
