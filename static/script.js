@@ -269,11 +269,17 @@ const _vb = {
     state: document.getElementById('vb-state'),
     clock: document.getElementById('vb-clock'),
     trace: document.getElementById('vb-trace'),
+    traceGhost: document.getElementById('vb-trace-ghost'),
     grid: document.querySelector('#vb-scope .vb-grid'),
     readout: document.getElementById('vb-readout'),
     cursor: document.getElementById('vb-cursor'),
+    cpu: document.getElementById('vb-cpu'),
+    cpuBar: document.getElementById('vb-cpu-bar'),
+    mem: document.getElementById('vb-mem'),
+    memBar: document.getElementById('vb-mem-bar'),
+    link: document.getElementById('vb-link'),
     mode: 'off',                 // off | listen | think | speak
-    pts: 96, n: 0, speaking: false,
+    pts: 96, n: 0, speaking: false, ghost: null,
 };
 const _vbText = {};
 
@@ -287,58 +293,89 @@ function _vbBuildGrid() {
     _vb.grid.innerHTML = s;
 }
 
-// Drive the oscilloscope trace. listen = low noise, speak/think = big sweep.
-function _vbDraw(now) {
-    if (_vb.mode === 'off' || !_vb.trace) return;
-    const dt = now / 1000;
-    const sw = 640, sh = 200;
-    const amp = (_vb.mode === 'speak' || _vb.mode === 'think') ? 72 : 16;
-    const base = sh / 2;
-    const drag = 3.2;                 // vector-sweep drag
+// Sample one sweep, return the point string. amp governs energy.
+function _vbSample(dt, amp) {
+    const sw = 640, sh = 200, base = sh / 2;
     let pts = '';
     for (let i = 0; i < _vb.pts; i++) {
         const x = (i / (_vb.pts - 1)) * sw;
-        let y = base;
+        let y;
         if (_vb.mode === 'listen') {
             y = base + Math.sin(dt * 2.4 + i * 0.5) * 6
                   + Math.sin(dt * 5.1 + i * 1.1) * 3;
-            y = Math.max(base - amp, Math.min(base + amp, y));
         } else {
-            // Lissajous-style vector sweep (speaking = energetic)
             y = base + Math.sin(dt * 3.1 + i * 0.28) * amp
                   + Math.sin(dt * 7.4 + i * 0.9) * (amp * 0.42);
         }
         y = Math.max(4, Math.min(sh - 4, y));
         pts += (i ? ' ' : '') + x.toFixed(1) + ',' + y.toFixed(1);
-        if (i > drag && _vb.mode === 'speak') {
-            // trailing neon trail: nothing extra — thick trace reads as arcade
-        }
     }
-    _vb.trace.setAttribute('points', pts);
+    return pts;
 }
 
-// Keep the HUD clock ticking while the overlay is live.
+// Drive the oscilloscope trace. Main + ghost trail; sweep lags a beat.
+function _vbDraw(now) {
+    if (_vb.mode === 'off' || !_vb.trace) return;
+    const dt = now / 1000;
+    const amp = (_vb.mode === 'speak' || _vb.mode === 'think') ? 72 : 16;
+    const pts = _vbSample(dt, amp);
+    _vb.trace.setAttribute('points', pts);
+    if (_vb.traceGhost) {
+        // Ghost lags one beat for a smooth phosphor trail effect.
+        let ghost;
+        if (_vb.ghost == null) ghost = pts;
+        else ghost = _vbSample(Math.max(0, dt - 0.14), amp);
+        _vb.traceGhost.setAttribute('points', ghost);
+        _vb.ghost = pts;
+        _vb.traceGhost.style.opacity = '1';
+    }
+}
+
+// Keep the HUD clock + live vitals ticking while the overlay is live.
+let _vbVitTimer = null;
+function _vbVitals() {
+    if (_vb.mode === 'off') return;
+    fetch('/api/vitals').then(r => r.json()).then(d => {
+        if (_vb.mode === 'off') return;
+        const cpu = (d.cpu != null ? Math.round(d.cpu) : 0);
+        const mem = (d.ram != null ? Math.round(d.ram) : 0);
+        if (_vb.cpu) { _vb.cpu.textContent = cpu + '%'; _vb.cpuBar.style.width = cpu + '%'; }
+        if (_vb.mem) { _vb.mem.textContent = mem + '%'; _vb.memBar.style.width = mem + '%'; }
+        if (_vb.link && _vb.link.textContent === 'OK' && d) {}
+    }).catch(() => {});
+}
 function _vbClock() {
     if (_vb.mode === 'off' || !_vb.clock) return;
     const t = new Date().toLocaleTimeString('en-US', { hour12: false });
     if (_vb.clock) _vb.clock.textContent = t;
 }
 
-// Public: enter / leave / drive the overlay. Stoops via _vb.mode + rAF.
+// Public: enter / leave / drive the overlay.
 window.voiceBSet = function (cfg) {
     if (!_vb.el) return;
     if (cfg.mode === 'off') {
         _vb.mode = 'off';
         _vb.el.classList.remove('active');
         _vb.el.setAttribute('aria-hidden', 'true');
+        if (_vbVitTimer) { clearInterval(_vbVitTimer); _vbVitTimer = null; }
         return;
     }
     _vb.mode = cfg.mode;
-    if (cfg.text) { _vbText.text = cfg.text; _vb.readout.textContent = cfg.text; }
-    if (cfg.chip) _vb.state.textContent = cfg.chip;
+    if (cfg.text) { _vbText.text = cfg.text; if (_vb.readout) _vb.readout.textContent = cfg.text; }
+    if (cfg.chip && _vb.state) _vb.state.textContent = cfg.chip;
+    // Tint the state chip: speaking = ok/green, else coffee accent.
+    if (_vb.state) {
+        const cls = (cfg.mode === 'speak') ? 'speak' : '';
+        if (cls) _vb.state.classList.add(cls); else _vb.state.classList.remove('speak');
+    }
+    if (cfg.link && _vb.link) _vb.link.textContent = cfg.link;
     _vb.el.classList.add('active');
     _vb.el.setAttribute('aria-hidden', 'false');
     _vbBuildGrid();
+    if (!_vbVitTimer) {
+        _vbVitals();
+        _vbVitTimer = setInterval(_vbVitals, 2000);
+    }
 };
 
 // Hook into TAKE-OVER: when TALK is pressed, open the overlay.
@@ -708,8 +745,8 @@ if (SpeechRecognition) {
 function processCommand(text) {
     // VOICE TALK MODE B: show what was heard + enter THINKING.
     if (window.voiceBSet && _vb.mode === 'listen') {
-        _vb.readout.textContent = (text || '').toUpperCase() + ' ▮';
-        _vb.state.textContent = '[ THINKING ]';
+        if (_vb.readout) _vb.readout.textContent = (text || '').toUpperCase() + ' ▮';
+        if (_vb.state) { _vb.state.textContent = '[ THINKING ]'; _vb.state.classList.remove('speak'); }
         _vb.mode = 'think';
     }
     addMessage(`YOU: ${text}`);
@@ -1709,10 +1746,10 @@ function setCoreState(state) {
     if (window.voiceBSet && _vb.mode !== 'off') {
         if (state === 'speaking' || state === 'processing') {
             _vb.mode = 'speak';
-            _vb.state.textContent = '[ SPEAKING ]';
+            if (_vb.state) { _vb.state.textContent = '[ SPEAKING ]'; _vb.state.classList.add('speak'); }
         } else if (state === 'active') {
             _vb.mode = 'listen';
-            _vb.state.textContent = '[ LISTENING ]';
+            if (_vb.state) { _vb.state.textContent = '[ LISTENING ]'; _vb.state.classList.remove('speak'); }
         }
     }
     const dial = core ? core.closest('.reactor') : null;

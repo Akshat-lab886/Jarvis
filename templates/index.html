@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=37">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=38">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -427,15 +427,24 @@
                 <span class="vb-chip" id="vb-state">[ IDLE ]</span>
                 <span class="vb-time num" id="vb-clock">--:--:--</span>
             </div>
+            <div class="vb-data" id="vb-data">
+                <div class="vd-cell" id="vb-cpu-cell"><span class="vd-label">CPU</span><span class="vd-value num" id="vb-cpu">--</span><span class="vd-bar"><i id="vb-cpu-bar" style="width:0%"></i></span></div>
+                <div class="vd-cell" id="vb-mem-cell"><span class="vd-label">MEM</span><span class="vd-value num" id="vb-mem">--</span><span class="vd-bar"><i id="vb-mem-bar" style="width:0%"></i></span></div>
+                <div class="vd-cell ok" id="vb-link-cell"><span class="vd-label">LINK</span><span class="vd-value" id="vb-link">OK</span></div>
+            </div>
             <div class="vb-stage">
                 <svg class="vb-scope" id="vb-scope" viewBox="0 0 640 200" preserveAspectRatio="none" aria-hidden="true">
                     <g class="vb-grid"></g>
+                    <polyline class="vb-trace-ghost" id="vb-trace-ghost" points="" fill="none"/>
                     <polyline class="vb-trace" id="vb-trace" points="" fill="none"/>
                 </svg>
                 <div class="vb-cursor" id="vb-cursor">▮</div>
             </div>
             <div class="vb-readout" id="vb-readout">SPEAK, SIR.</div>
-            <button class="vb-dismiss" id="vb-dismiss" title="Exit voice mode">[ CANCEL ]</button>
+            <div class="vb-footer">
+                <span class="vb-caption">▼ VOICE LINK ACTIVE — SPEAK, SIR</span>
+                <button class="vb-dismiss" id="vb-dismiss" title="Exit voice mode">[ CANCEL ]</button>
+            </div>
         </div>
     </div>
 
@@ -452,6 +461,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=37"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=38"></script>
 </body>
 </html>

@@ -1998,6 +1998,16 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
 }
 .voice-b.active { display: flex; }
 
+/* scanline material — subtle CRT grid, parchment tint, never animated */
+.voice-b::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+    background:
+        repeating-linear-gradient(
+            0deg,
+            transparent 0 2px,
+            rgba(107,74,38,.035) 2px 3px);
+}
+
 /* corner brackets — vector-arcade frame */
 .voice-b .vb-c {
     position: absolute; width: 26px; height: 26px;
@@ -2021,8 +2031,22 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
     letter-spacing: .18em; padding: 5px 12px; border-radius: 0;
     background: var(--bg-1); border: 2px solid var(--accent-hi); color: var(--accent-hi);
 }
+.vb-chip.speak { border-color: var(--ok); color: var(--ok); background: var(--ok-dim, rgba(47,122,68,.08)); }
 .vb-time { font-family: var(--font-mono); font-size: 14px; color: var(--text-3);
     font-variant-numeric: tabular-nums; }
+
+.vb-data {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; width: 100%; padding: 0 4px 10px;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.vb-data .vd-cell { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.vb-data .vd-label { font-size: 9px; letter-spacing: .16em; color: var(--text-3); white-space: nowrap; }
+.vb-data .vd-value { font-size: 20px; font-weight: 650; color: var(--accent-hi); white-space: nowrap; }
+.vb-data .vd-bar { flex: 1; min-width: 24px; height: 3px; background: var(--line, #CDBFA5); }
+.vb-data .vd-bar i { display: block; height: 3px; background: var(--accent-hi); }
+.vb-data .vd-cell.ok .vd-value { color: var(--ok); }
+.vb-data .vd-cell.ok .vd-bar i { background: var(--ok); }
 
 .vb-stage {
     position: relative; flex: 1; min-height: 0;
@@ -2037,6 +2061,10 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
     stroke: var(--accent-hi); stroke-width: 2.5;
     stroke-linecap: square; stroke-linejoin: miter;
 }
+.vb-trace-ghost {
+    stroke: var(--accent-dim, rgba(107,74,38,.14)); stroke-width: 5;
+    stroke-linecap: square; stroke-linejoin: miter;
+}
 .vb-cursor {
     position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
     font-family: var(--font-mono); font-size: 56px; color: var(--accent-hi);
@@ -2045,19 +2073,23 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
 @keyframes vbBlink { 50% { opacity: .15; } }
 
 .vb-readout {
-    padding-top: 18px; border-top: 1px solid var(--accent-line);
-    font-family: var(--font-mono); font-size: 28px; letter-spacing: .08em;
-    color: var(--text-1); min-height: 60px; white-space: pre-wrap; word-break: break-word;
+    padding: 14px 4px 18px; border-top: 1px solid var(--accent-line);
+    font-family: var(--font-mono); font-size: 26px; letter-spacing: .06em;
+    color: var(--text-1); min-height: 58px; white-space: pre-wrap; word-break: break-word;
 }
 .vb-readout .caret { animation: vbBlink 1s steps(2) infinite; }
+.vb-footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+}
+.vb-caption { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em;
+    color: var(--text-3); }
 .vb-dismiss {
-    margin-top: 24px; align-self: center;
-    font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em;
     background: var(--bg-1); border: 2px solid var(--accent-hi); color: var(--accent-hi);
-    padding: 10px 20px; border-radius: 0; cursor: pointer;
+    padding: 9px 18px; border-radius: 0; cursor: pointer; min-height: 36px;
 }
 .vb-dismiss:hover { background: var(--accent-hi); color: var(--bg-1); }
 @media (prefers-reduced-motion: reduce) {
     .voice-b .vb-cursor, .voice-b .vb-readout .caret { animation: none; }
-    .voice-b .vb-trace { stroke-dasharray: none; }
+    .voice-b .vb-trace, .voice-b .vb-trace-ghost { stroke-dasharray: none; }
 }
