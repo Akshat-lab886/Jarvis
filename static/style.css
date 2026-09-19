@@ -1929,7 +1929,24 @@ body.theme-parchment .gauge .arc-cpu { filter: none; }
 body.theme-parchment .gauge .arc-ram { stroke: #A08A64; }
 body.theme-parchment .gcore { box-shadow: 0 0 10px var(--accent-glow); }
 body.theme-parchment .hstatus-pill { background: var(--bg-1); border-color: var(--line-soft); box-shadow: none; }
-body.theme-parchment .hero-chips button { background: var(--bg-2); box-shadow: none; }
+body.theme-parchment .hero-chips button {
+    /* single authoritative chip style — parchment is the only theme,
+       so reassert exact metrics here to override every stale rule
+       scattered through the old multi-theme file. */
+    display: inline-flex; align-items: baseline; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    padding: 8px 12px; border-radius: 0;
+    background: var(--bg-2); color: var(--text-2);
+    border: 1px solid var(--line-soft); cursor: pointer;
+    box-shadow: none; transform: none;
+}
+body.theme-parchment .hero-chips button b {
+    font-weight: 700; color: var(--accent);
+    width: 34px; flex: none; text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+body.theme-parchment .hero-chips button span { color: var(--text-2); }
 body.theme-parchment .hero-chips button:hover {
     transform: none; box-shadow: none;
     color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim);
