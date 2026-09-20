@@ -203,7 +203,24 @@ TOOL_SPECS = [
     _fn("morning_briefing", "Full morning briefing (calendar, email, "
         "weather, schedule insights).", {}),
     _fn("daily_summary", "Summarize everything the user did today.", {}),
-    _fn("get_weather", "Local weather.", {}),
+    _fn("get_weather", "Current weather + severe-weather alerts for a "
+        "city. Omit 'city' to use the detected location.",
+        {"city": {"type": "string", "description": "optional city/place"}},
+        []),
+    _fn("convert_currency", "Convert an amount between currencies (e.g. "
+        "100 USD to EUR). ECB reference rates.",
+        {"amount": {"type": "number"},
+         "from": {"type": "string"},
+         "to": {"type": "string"}},
+        ["amount", "from", "to"]),
+    _fn("geocode", "Convert a place name to latitude/longitude, or "
+        "reverse: a lat,lon to a place name. Set reverse=true for the "
+        "reverse direction.",
+        {"query": {"type": "string"},
+         "lat": {"type": "number"},
+         "lon": {"type": "number"},
+         "reverse": {"type": "boolean"}},
+        []),
     _fn("get_stock", "Current stock quote.",
         {"symbol": {"type": "string"}}, ["symbol"]),
     _fn("run_skill", "Run a saved skill by name.",

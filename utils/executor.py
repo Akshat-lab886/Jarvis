@@ -221,7 +221,47 @@ class JarvisExecutor:
                 self.mouth.speak(result_msg)
 
             elif action == 'get_weather':
-                result_msg = self.tools.get_weather()
+                city = command.get('city') or target or None
+                try:
+                    from utils.weather_api import weather_report
+                    result_msg = weather_report(city=city)
+                except Exception:
+                    result_msg = self.tools.get_weather()
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'convert_currency':
+                frm = command.get('from') or 'USD'
+                to = command.get('to') or 'EUR'
+                amt = command.get('amount') or target or 1
+                try:
+                    from utils.currency_api import convert
+                    result_msg = convert(amt, frm, to)
+                except Exception as e:
+                    result_msg = f"Currency conversion unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'geocode':
+                q = command.get('query') or target or ''
+                lat = command.get('lat')
+                lon = command.get('lon')
+                rv = command.get('reverse') or (lat is not None
+                                                and lon is not None)
+                try:
+                    if rv:
+                        from utils.nominatim_api import reverse
+                        result_msg = reverse(lat, lon)
+                    else:
+                        from utils.nominatim_api import geocode_best
+                        res = geocode_best(q)
+                        if isinstance(res, dict) and 'error' in res:
+                            result_msg = res['error']
+                        else:
+                            result_msg = (f"{res['name']} → "
+                                          f"{res['lat']:.4f}, {res['lon']:.4f}")
+                except Exception as e:
+                    result_msg = f"Geocoding unavailable: {e}"
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
