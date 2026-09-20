@@ -143,7 +143,18 @@ def download_file(url, filename_hint=None):
     """
     try:
         print(f"Downloading: {url}")
-        
+
+        # Layered security guard (best-effort; never blocks when keys are
+        # unset — upgrades the verdicts only when configured).
+        from utils.urlguard import check_url, check_file
+        try:
+            scan = check_url(url)
+            if scan.get("flagged"):
+                return (f"Blocked: this URL is flagged as malicious "
+                        f"({scan.get('detail')}). Refusing to download, Sir.")
+        except Exception:
+            pass
+
         response = requests.get(url, headers=HEADERS, timeout=60, stream=True)
         response.raise_for_status()
         
@@ -192,7 +203,16 @@ def download_file(url, filename_hint=None):
                 f.write(chunk)
         
         final_filename = os.path.basename(filepath)
-        return f"Downloaded '{final_filename}' to your Downloads folder."
+        # Optional post-download VirusTotal file-hash scan (only when keyed).
+        scan_line = ""
+        try:
+            fscan = check_file(filepath)
+            if fscan.get("enabled"):
+                scan_line = (" | file scan: " + fscan.get("detail", "")
+                             + (" — SUSPICIOUS" if fscan.get("flag") else ""))
+        except Exception:
+            pass
+        return f"Downloaded '{final_filename}' to your Downloads folder.{scan_line}"
         
     except requests.RequestException as e:
         return f"Download failed: {str(e)}"

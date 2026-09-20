@@ -213,6 +213,12 @@ TOOL_SPECS = [
          "from": {"type": "string"},
          "to": {"type": "string"}},
         ["amount", "from", "to"]),
+    _fn("check_url", "Scan a URL or file path for malware/phishing "
+        "(URLhaus + Google Safe Browsing + VirusTotal when keyed).",
+        {"url": {"type": "string",
+                 "description": "URL to scan, or 'file:<path>' for a "
+                                "local file hash scan"}},
+        ["url"]),
     _fn("geocode", "Convert a place name to latitude/longitude, or "
         "reverse: a lat,lon to a place name. Set reverse=true for the "
         "reverse direction.",

@@ -265,6 +265,25 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'check_url':
+                val = command.get('url') or target or ''
+                try:
+                    if val.startswith('file:'):
+                        from utils.urlguard import check_file
+                        res = check_file(val[5:])
+                        result_msg = (f"File scan ({'enabled' if res.get('enabled') else 'no key'}): "
+                                      f"{res.get('detail')} — "
+                                      f"{'SUSPICIOUS' if res.get('flag') else 'clean'}.")
+                    else:
+                        from utils.urlguard import check_url
+                        res = check_url(val)
+                        result_msg = (f"{val}: {res.get('detail')} "
+                                      f"({', '.join(res.get('sources', []))}).")
+                except Exception as e:
+                    result_msg = f"Security scan unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:
