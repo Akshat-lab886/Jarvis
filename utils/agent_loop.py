@@ -274,6 +274,14 @@ TOOL_SPECS = [
         "Carrier is auto-detected. (Requires WhereParcel key for live "
         "status; falls back to identifying the carrier.)",
         {"number": {"type": "string"}}, ["number"]),
+    _fn("food_lookup", "Look up a food's nutrition by barcode or name "
+        "(Open Food Facts). Ties into fridge_vision scans.",
+        {"code": {"type": "string",
+                  "description": "barcode (digits) or a product name"}},
+        ["code"]),
+    _fn("recipe", "Find meal ideas / a recipe by main ingredient "
+        "(TheMealDB). e.g. 'chicken', 'rice', 'tomato'.",
+        {"ingredient": {"type": "string"}}, ["ingredient"]),
     _fn("computer_use", "Background desktop control: click, type, press "
         "keys, scroll, screenshot, or click a named UI element of a "
         "background app.",

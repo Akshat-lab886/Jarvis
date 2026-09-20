@@ -323,6 +323,30 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'food_lookup':
+                code = command.get('code') or target or original_text or ''
+                try:
+                    from utils.food_api import (food_lookup_barcode,
+                                               food_search)
+                    if code.isdigit():
+                        result_msg = food_lookup_barcode(code)
+                    else:
+                        result_msg = food_search(code)
+                except Exception as e:
+                    result_msg = f"Food lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'recipe':
+                ing = command.get('ingredient') or target or original_text or ''
+                try:
+                    from utils.food_api import recipe_by_ingredient
+                    result_msg = recipe_by_ingredient(ing)
+                except Exception as e:
+                    result_msg = f"Recipe lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:
