@@ -296,6 +296,33 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg[:2000]})
                 self.mouth.speak(result_msg[:400])
 
+            elif action == 'track_flight':
+                callsign = command.get('callsign') or target or ''
+                lat = command.get('lat')
+                lon = command.get('lon')
+                near = command.get('near') or (lat is not None
+                                               and lon is not None)
+                try:
+                    from utils.flight_api import flights_near, track_flight
+                    if near and lat is not None and lon is not None:
+                        result_msg = flights_near(lat, lon)
+                    else:
+                        result_msg = track_flight(callsign)
+                except Exception as e:
+                    result_msg = f"Flight tracking unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'track_package':
+                num = command.get('number') or target or original_text or ''
+                try:
+                    from utils.track_api import track_package
+                    result_msg = track_package(num)
+                except Exception as e:
+                    result_msg = f"Package tracking unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:

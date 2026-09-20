@@ -261,6 +261,19 @@ TOOL_SPECS = [
          "lang": {"type": "string"},
          "stdin": {"type": "string"}},
         ["code"]),
+    _fn("track_flight", "Track a live flight by callsign (e.g. UAL 123, "
+        "BAW456) or list overhead aircraft near a lat/lon. Use to answer "
+        "'track my flight' or 'what is flying overhead'.",
+        {"callsign": {"type": "string"},
+         "lat": {"type": "number"},
+         "lon": {"type": "number"},
+         "near": {"type": "boolean",
+                  "description": "true to list aircraft near lat/lon"}},
+        []),
+    _fn("track_package", "Track a delivery package by tracking number. "
+        "Carrier is auto-detected. (Requires WhereParcel key for live "
+        "status; falls back to identifying the carrier.)",
+        {"number": {"type": "string"}}, ["number"]),
     _fn("computer_use", "Background desktop control: click, type, press "
         "keys, scroll, screenshot, or click a named UI element of a "
         "background app.",
