@@ -282,6 +282,28 @@ TOOL_SPECS = [
     _fn("recipe", "Find meal ideas / a recipe by main ingredient "
         "(TheMealDB). e.g. 'chicken', 'rice', 'tomato'.",
         {"ingredient": {"type": "string"}}, ["ingredient"]),
+    _fn("define_word", "Look up a word's definition, pronunciation and "
+        "synonyms (Free Dictionary).",
+        {"word": {"type": "string"}}, ["word"]),
+    _fn("lookup_book", "Search books by title/author → title, author, year "
+        "(Open Library).",
+        {"query": {"type": "string"}}, ["query"]),
+    _fn("check_crypto", "Live price for a cryptocurrency (CoinGecko) by "
+        "name or ticker, e.g. 'btc', 'ethereum', 'sol'.",
+        {"symbol": {"type": "string"}}, ["symbol"]),
+    _fn("public_holidays", "Public holidays for a country (ISO-2 code, "
+        "e.g. US/GB/IN).",
+        {"country": {"type": "string"},
+         "year": {"type": "integer"}}, []),
+    _fn("movie_lookup", "Search movies by title → name, year, rating "
+        "(TMDb).",
+        {"title": {"type": "string"}}, ["title"]),
+    _fn("space_report", "NASA APOD (photo of the day) or the ISS's "
+        "current position above Earth.",
+        {"what": {"type": "string",
+                  "enum": ["apod", "iss", "both"], "description": "apod "
+                  "= astronomy picture of the day; iss = station position"}},
+        []),
     _fn("computer_use", "Background desktop control: click, type, press "
         "keys, scroll, screenshot, or click a named UI element of a "
         "background app.",

@@ -347,6 +347,72 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'define_word':
+                word = command.get('word') or target or original_text or ''
+                try:
+                    from utils.info_api import define
+                    result_msg = define(word)
+                except Exception as e:
+                    result_msg = f"Dictionary unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'lookup_book':
+                q = command.get('query') or target or original_text or ''
+                try:
+                    from utils.info_api import book_lookup
+                    result_msg = book_lookup(q)
+                except Exception as e:
+                    result_msg = f"Book lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'check_crypto':
+                sym = command.get('symbol') or target or original_text or 'bitcoin'
+                try:
+                    from utils.info_api import crypto_price
+                    result_msg = crypto_price(sym)
+                except Exception as e:
+                    result_msg = f"Crypto price unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'public_holidays':
+                country = command.get('country') or 'US'
+                year = command.get('year')
+                try:
+                    from utils.info_api import holidays
+                    result_msg = holidays(country, year)
+                except Exception as e:
+                    result_msg = f"Holiday lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'movie_lookup':
+                title = command.get('title') or target or original_text or ''
+                try:
+                    from utils.info_api import movie_lookup
+                    result_msg = movie_lookup(title)
+                except Exception as e:
+                    result_msg = f"Movie lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'space_report':
+                what = command.get('what') or target or 'both'
+                try:
+                    from utils.info_api import space_apod, iss_location
+                    if what == 'apod':
+                        result_msg = space_apod()
+                    elif what == 'iss':
+                        result_msg = iss_location()
+                    else:
+                        result_msg = space_apod() + " " + iss_location()
+                except Exception as e:
+                    result_msg = f"Space lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:
