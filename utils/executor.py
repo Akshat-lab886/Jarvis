@@ -413,6 +413,58 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'research_papers':
+                q = command.get('query') or target or original_text or ''
+                try:
+                    from utils.ext_api import research
+                    result_msg = research(q)
+                except Exception as e:
+                    result_msg = f"Research lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'eth_watch':
+                addr = command.get('address') or target or original_text or ''
+                try:
+                    from utils.ext_api import eth_watch
+                    result_msg = eth_watch(addr)
+                except Exception as e:
+                    result_msg = f"Ethereum watch unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'ocr_image':
+                img = command.get('image') or target or original_text or ''
+                try:
+                    from utils.ext_api import ocr_image
+                    result_msg = ocr_image(img)
+                except Exception as e:
+                    result_msg = f"OCR unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'gen_pdf':
+                url = command.get('url') or target or original_text or ''
+                fname = command.get('fname') or 'jarvis.pdf'
+                psize = command.get('page_size') or 'A4'
+                try:
+                    from utils.ext_api import pdf_url
+                    result_msg = pdf_url(url, fname, psize)
+                except Exception as e:
+                    result_msg = f"PDF generation unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'track_habit':
+                metric = command.get('metric') or target or original_text or ''
+                try:
+                    from utils.ext_api import habit
+                    result_msg = habit(metric)
+                except Exception as e:
+                    result_msg = f"Habit tracking unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:

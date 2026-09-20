@@ -304,6 +304,21 @@ TOOL_SPECS = [
                   "enum": ["apod", "iss", "both"], "description": "apod "
                   "= astronomy picture of the day; iss = station position"}},
         []),
+    _fn("research_papers", "Search academic papers on a topic (OpenAlex) "
+        "-> title, authors, year, citations.",
+        {"query": {"type": "string"}}, ["query"]),
+    _fn("eth_watch", "Check an Ethereum address's balance (Etherscan).",
+        {"address": {"type": "string"}}, ["address"]),
+    _fn("ocr_image", "Extract text from an image or PDF scan (OCR.Space). "
+        "Pass a /static path or data URL.",
+        {"image": {"type": "string"}}, ["image"]),
+    _fn("gen_pdf", "Render a URL or HTML to a PDF file (pdflayer).",
+        {"url": {"type": "string"},
+         "fname": {"type": "string"},
+         "page_size": {"type": "string"}}, ["url"]),
+    _fn("track_habit", "Track a habit metric on a Pixela streak graph "
+        "(needs PIXELA_USER).",
+        {"metric": {"type": "string"}}, ["metric"]),
     _fn("computer_use", "Background desktop control: click, type, press "
         "keys, scroll, screenshot, or click a named UI element of a "
         "background app.",
