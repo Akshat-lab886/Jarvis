@@ -252,6 +252,15 @@ TOOL_SPECS = [
                      "enum": ["auto", "local", "docker", "ssh", "daytona",
                               "singularity", "vercel", "modal"]}},
         []),
+    _fn("run_code", "Execute code in many languages (Python, JS, C, C++, "
+        "Rust, Go…) via a hosted executor and return the output. Use to "
+        "verify code you generate, e.g. coder.py results, in a language "
+        "the local Python sandbox cannot run. 'lang' may be a name or "
+        "file extension (.py, .js, .cpp).",
+        {"code": {"type": "string"},
+         "lang": {"type": "string"},
+         "stdin": {"type": "string"}},
+        ["code"]),
     _fn("computer_use", "Background desktop control: click, type, press "
         "keys, scroll, screenshot, or click a named UI element of a "
         "background app.",

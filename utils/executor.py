@@ -284,6 +284,18 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'run_code':
+                code = command.get('code') or ''
+                lang = command.get('lang') or None
+                stdin = command.get('stdin') or ''
+                try:
+                    from utils.run_code import run_to_string
+                    result_msg = run_to_string(code, lang, stdin=stdin)
+                except Exception as e:
+                    result_msg = f"run-code unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg[:2000]})
+                self.mouth.speak(result_msg[:400])
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:
