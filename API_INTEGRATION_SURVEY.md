@@ -149,9 +149,22 @@ gracefully when unset.
 | `track_package` (carrier infer) | `utils/track_api.py` (WhereParcel) | WHEREPARCEL key | USPS detected |
 | `food_lookup` (barcode/name) | `utils/food_api.py` (Open Food Facts) | None | Prince 466 kcal |
 | `recipe` | `utils/food_api.py` (TheMealDB) | free key | chicken → 3 meals |
+| `define_word` | `utils/info_api.py` (Free Dictionary) | None | Serendipity def + IPA + syn |
+| `lookup_book` | `utils/info_api.py` (Open Library) | None | Dune by Frank Herbert (1965) |
+| `check_crypto` | `utils/info_api.py` (CoinGecko) | None | Solana $108.54 (-2.64%) |
+| `public_holidays` | `utils/info_api.py` (Nager.Date) | None | US/GB/IN 2026 holidays |
+| `movie_lookup` | `utils/info_api.py` (TMDb) | free key | — (key-gated) |
+| `space_report` | `utils/info_api.py` (NASA + ISS) | None / NASA key | APOD + ISS position |
 
 **Security hardening:** `downloader.py` now pre-scans every download URL and
 refuses flagged ones; optional VirusTotal file-hash after save.
 
 **To add keys** (each enables more depth, all optional): `SAFE_BROWSING_API_KEY`,
-`VIRUSTOTAL_API_KEY`, `JUDGE0_API_KEY`, `WHEREPARCEL_API_KEY`, `THEMEALDB_API_KEY`.
+`VIRUSTOTAL_API_KEY`, `JUDGE0_API_KEY`, `WHEREPARCEL_API_KEY`, `THEMEALDB_API_KEY`,
+`THEMOVIEDB_API_KEY`, `NASA_API_KEY` (defaults to NASA demo key).
+
+> **Note:** `dictionaryapi.dev` and `openlibrary.org` were intermittently
+> timing out during testing (third-party flakiness) — `define_word` /
+> `lookup_book` degrade gracefully with a clear message when that happens.
+> Vision's temporary 502 traced to the local Mimo gateway (`localhost:20128`)
+> being down + a stale Google key, not to these integrations.
