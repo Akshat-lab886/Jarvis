@@ -1177,6 +1177,58 @@ def upload_file():
         return jsonify({'success': True, 'message': 'File uploaded successfully',
                         'filename': safe_name}), 200
 
+@app.route('/api/intel')
+def api_intel():
+    """LIVE INTEL — one snapshot of real data from the connected public-API
+    fleet for the console's intel strip. Cached ~5 min server-side so the
+    strip is fast: no-key paths run live, key-gated ones report NEEDS_KEY.
+    Never raises: every cell degrades to {'ok': False, 'why': ...}.
+    """
+    import time as _t
+    now = _t.time()
+    cache = getattr(api_intel, '_cache', None)
+    if cache and (now - cache[0]) < 300:
+        return jsonify(cache[1])
+
+    def cell(fn, *a, **k):
+        try:
+            v = fn(*a, **k)
+            if not v:
+                return {'ok': False, 'why': 'empty'}
+            t = str(v)[:220]
+            if 'unavailable' in t.lower():
+                return {'ok': False, 'why': t[:80]}
+            return {'ok': True, 'text': t}
+        except Exception as exc:  # noqa: BLE001 — degrade, never 500
+            return {'ok': False, 'why': str(exc)[:80]}
+
+    out = {'ts': int(now), 'cells': {}}
+    try:
+        from utils.weather_api import weather_report
+        out['cells']['weather'] = cell(weather_report, city='London')
+    except Exception as exc:
+        out['cells']['weather'] = {'ok': False, 'why': str(exc)[:80]}
+    try:
+        from utils.info_api import crypto_price, space_apod
+        out['cells']['crypto'] = cell(crypto_price, 'bitcoin')
+        out['cells']['space'] = cell(space_apod)
+    except Exception as exc:
+        out['cells']['crypto'] = {'ok': False, 'why': str(exc)[:80]}
+        out['cells']['space'] = out['cells'].get('space', {'ok': False, 'why': 'n/a'})
+    try:
+        from utils.flight_api import flights_near
+        out['cells']['flights'] = cell(flights_near, 51.47, -0.4543, 80)
+    except Exception as exc:
+        out['cells']['flights'] = {'ok': False, 'why': str(exc)[:80]}
+    try:
+        from utils.ext_api import research
+        out['cells']['papers'] = cell(research, 'large language models')
+    except Exception as exc:
+        out['cells']['papers'] = {'ok': False, 'why': str(exc)[:80]}
+
+    api_intel._cache = (now, out)
+    return jsonify(out)
+
 @app.route('/api/vision', methods=['POST'])
 def api_vision():
     """Describe an image using a vision-capable model from the fleet.

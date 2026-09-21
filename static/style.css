@@ -2009,15 +2009,27 @@ body.theme-parchment .hero-greet { flex: 1 1 auto; margin-bottom: 0; text-align:
 body.theme-parchment .hstatus-pill { margin-top: 0; }
 body.theme-parchment .hero-chips { justify-content: flex-start; width: 100%; }
 
-/* — hero instrument refit: meta band, greeting, tools row — */
+/* — hero instrument refit: meta band, greeting, tools row —
+   GRID-LOCKED (universal): meta · sub · tools · chips. The old
+   multi-era flex rules stacked children as strangers (greet/notice
+   overlap at 480, line-rule clipping at 820/1440). One grid ends it. */
 body.theme-parchment .hero-card {
     position: relative;
-    align-items: stretch; flex-direction: column; gap: 0;
-    padding: 20px 24px 18px;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    grid-template-areas:
+        "meta  meta"
+        "greet gauge"
+        "sub   gauge"
+        "tools tools"
+        "chips chips";
+    gap: 4px 20px; align-items: center;
+    padding: 18px 24px 16px;
     max-width: 760px;
     overflow: hidden;
 }
 body.theme-parchment .hero-meta {
+    grid-area: meta; min-width: 0;
     display: flex; align-items: center; gap: 12px;
     padding-bottom: 12px; margin-bottom: 12px;
     border-bottom: 1px solid var(--line-soft);
@@ -2026,13 +2038,14 @@ body.theme-parchment .hero-meta {
 body.theme-parchment .hm-id { font-size: 13px; font-weight: 650; color: var(--text-1); letter-spacing: .06em; }
 body.theme-parchment .hm-lbl { font-size: 9px; font-weight: 600; letter-spacing: .18em; color: var(--text-3); text-transform: uppercase; margin-left: auto; }
 body.theme-parchment .hm-dot { width: 7px; height: 7px; background: var(--ok); flex: none; }
-body.theme-parchment .hero-greet { font-size: 24px; font-weight: 700; letter-spacing: -.01em; line-height: 1.08; }
-body.theme-parchment .hero-sub { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; color: var(--text-3); margin: 4px 0 0; }
-body.theme-parchment .hero-rule { height: 1px; background: var(--line-soft); margin: 16px 0 14px; }
-body.theme-parchment .hero-tools { display: flex; align-items: center; gap: 20px; }
+body.theme-parchment .hero-greet { grid-area: greet; min-width: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; line-height: 1.08; }
+body.theme-parchment .hero-sub { grid-area: sub; min-width: 0; font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; color: var(--text-3); margin: 4px 0 0; }
+body.theme-parchment .hero-tools { grid-area: tools; min-width: 0; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 body.theme-parchment .hero-tools .wordmark,
 body.theme-parchment .hero-tools .hstatus-pill { margin: 0; }
 body.theme-parchment .hero-tools .wordmark { text-indent: 0; }
+body.theme-parchment .hero-chips { grid-area: chips; min-width: 0; }
+body.theme-parchment .hero-card .gauge { grid-area: gauge; }
 body.theme-parchment .hero { align-items: stretch; padding: 18px 28px 6px; }
 body.theme-parchment .hero-band {
     content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
@@ -2083,27 +2096,27 @@ body.theme-parchment .idle-meta .im-cell { display: flex; align-items: baseline;
 body.theme-parchment .idle-meta .im-lbl { font-size: 8.5px; font-weight: 600; letter-spacing: .16em; color: var(--text-3); }
 body.theme-parchment .idle-meta .im-val { font-size: 11.5px; font-weight: 500; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 
-/* — narrow feed: hero stacks grid-locked (no overlap), tools clamp —
-   greet is the ONLY cell allowed to wrap; clock/meta hold one line. */
+/* — narrow feed: the universal single-column grid holds; sub drops
+   below chips so 4 hero cells never fight for one row. Chips stack. */
 @media (max-width: 720px) {
     body.theme-parchment .hero-card {
-        display: grid; grid-template-columns: minmax(0,1fr) auto;
+        grid-template-columns: minmax(0,1fr);
         grid-template-areas:
-            "meta meta" "greet gauge" "tools tools" "chips chips";
-        gap: 4px 12px; align-items: center;
-        padding-top: 10px;
+            "meta" "greet" "tools" "chips" "sub";
+        gap: 6px 0; align-items: stretch;
+        padding: 12px 16px 12px;
     }
-    body.theme-parchment .hero-meta { grid-area: meta; flex-wrap: nowrap; padding-bottom: 6px; margin-bottom: 6px; min-width: 0; }
+    body.theme-parchment .hero-card .gauge { display: none; }
+    body.theme-parchment .hero-meta { grid-area: meta; flex-wrap: nowrap; padding-bottom: 6px; margin-bottom: 4px; min-width: 0; }
     body.theme-parchment .hm-id { font-size: 12px; flex: none; }
     body.theme-parchment .hm-lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 8px; letter-spacing: .14em; }
     body.theme-parchment .hero-greet { grid-area: greet; min-width: 0; font-size: 24px; line-height: 1.1; overflow-wrap: normal; word-break: normal; hyphens: none; text-wrap: balance; }
-    body.theme-parchment .hero-tools { grid-area: tools; min-width: 0; }
-    body.theme-parchment .hero-chips { grid-area: chips; }
-    body.theme-parchment .hero-card .gauge { grid-area: gauge; }
+    body.theme-parchment .hero-tools { grid-area: tools; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+    body.theme-parchment .hero-chips { grid-area: chips; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    body.theme-parchment .hero-chips button { padding: 7px 10px; justify-content: flex-start; }
+    body.theme-parchment .hero-chips button b { width: auto; }
     body.theme-parchment .hero-tools .wordmark { display: none; }
     body.theme-parchment .hstatus-pill { font-size: 9px; padding: 5px 10px; white-space: nowrap; max-width: 100%; }
-    body.theme-parchment .hero-chips button { padding: 7px 10px; }
-    body.theme-parchment .hero-chips button b { width: auto; }
     body.theme-parchment .idle-meta { margin: 2px 18px 8px; gap: 16px; flex-wrap: wrap; }
 }
 
@@ -2255,4 +2268,26 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
 @media (prefers-reduced-motion: reduce) {
     .voice-b .vb-cursor, .voice-b .vb-readout .caret { animation: none; }
     .voice-b .vb-trace, .voice-b .vb-trace-ghost { stroke-dasharray: none; }
+}
+
+/* — INTEL STRIP: one ruled live-data row under the hero. Five cells fed
+   by GET /api/intel (weather, crypto, space, flights, papers). Ruled
+   ledger style like idle-meta: top hairline, mono labels, ellipsis vals.
+   Hides with the hero once conversation flows (.feed.busy). — */
+body.theme-parchment .intel-strip {
+    display: none; flex: none;
+    margin: 2px 28px 0; padding: 7px 0 6px;
+    border-top: 1px solid var(--line-soft);
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    gap: 24px;
+}
+body.theme-parchment .intel-strip.live { display: flex; }
+body.theme-parchment .feed.busy .intel-strip { display: none; }
+body.theme-parchment .intel-strip .ix-cell { display: flex; align-items: baseline; gap: 7px; min-width: 0; flex: 1 1 0; }
+body.theme-parchment .intel-strip .ix-lbl { font-size: 8.5px; font-weight: 700; letter-spacing: .16em; color: var(--accent); flex: none; }
+body.theme-parchment .intel-strip .ix-val { font-size: 11px; font-weight: 500; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.theme-parchment .intel-strip .ix-cell.bad .ix-val { color: var(--text-3); }
+@media (max-width: 720px) {
+    body.theme-parchment .intel-strip { margin: 2px 18px 0; gap: 14px; flex-wrap: wrap; }
+    body.theme-parchment .intel-strip .ix-cell { flex: 1 1 40%; }
 }

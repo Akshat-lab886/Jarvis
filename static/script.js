@@ -2814,6 +2814,12 @@ if (studyBtn) {
         { code: 'APR', label: 'approvals stack', act: () => flashStack('stack-approvals') },
         { code: 'AUT', label: 'automations stack', act: () => flashStack('stack-automations') },
         { code: 'HIST', label: 'mission history', act: () => { if (window.setMisView) setMisView('history'); flashStack('stack-missions'); } },
+        { code: 'WX', label: 'weather now (London)', act: () => typeof sendText === 'function' && sendText("what's the weather like in London right now") },
+        { code: 'BTC', label: 'bitcoin price', act: () => typeof sendText === 'function' && sendText("what's the bitcoin price right now") },
+        { code: 'AIR', label: 'flights near London', act: () => typeof sendText === 'function' && sendText('any flights near London right now') },
+        { code: 'APOD', label: "today's space picture", act: () => typeof sendText === 'function' && sendText("show me today's astronomy picture") },
+        { code: 'PAP', label: 'latest AI papers', act: () => typeof sendText === 'function' && sendText('find the latest papers on large language models') },
+        { code: 'INT', label: 'full intel briefing', act: () => typeof sendText === 'function' && sendText('intel briefing: weather, bitcoin, space, flights, papers') },
     ];
     const palBackdrop = $('palette-backdrop');
     const palInput = $('palette-input');
@@ -3138,6 +3144,33 @@ if (studyBtn) {
                 set('im-next', '—');
                 set('im-budget', d.budget ? `${Number(d.budget.spent_usd || 0).toFixed(2)}/${Number(d.budget.limit_usd || 0).toFixed(2)}` : '—');
                 im.classList.add('live');
+            }
+        } catch (_) {}
+
+        // Intel strip: one GET to /api/intel hydrates WX/BTC/APOD/AIR/PAP.
+        // Dead cells show a quiet dash; strip appears only when ≥1 cell lives.
+        try {
+            const r = await fetch('/api/intel');
+            if (r.ok) {
+                const ix = await r.json();
+                const cells = (ix && ix.cells) || {};
+                const strip = document.getElementById('intel-strip');
+                let alive = 0;
+                Object.keys(cells).forEach(k => {
+                    const el = strip && strip.querySelector(`[data-ix="${k}"]`);
+                    if (!el) return;
+                    const val = el.querySelector('.ix-val');
+                    if (!val) return;
+                    if (cells[k] && cells[k].ok) {
+                        val.textContent = String(cells[k].text).split(/[.;]/)[0].slice(0, 60);
+                        el.classList.remove('bad');
+                        alive += 1;
+                    } else {
+                        val.textContent = '—';
+                        el.classList.add('bad');
+                    }
+                });
+                if (strip && alive) strip.classList.add('live');
             }
         } catch (_) {}
     } catch (_) {}

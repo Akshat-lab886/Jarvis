@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=54">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=59">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -143,8 +143,16 @@
                     <button onclick="quickPrompt('summarize my day')"><b>SYS</b><span>SUMMARY</span></button>
                     <button onclick="quickPrompt('show my missions')"><b>MIS</b><span>ACTIVE</span></button>
                     <button onclick="quickPrompt('check system health')"><b>HLT</b><span>CHECK</span></button>
+                    <button onclick="quickPrompt('intel briefing: weather, bitcoin, space, papers')"><b>INT</b><span>INTEL</span></button>
                 </div>
             </div>
+        </div>
+        <div class="intel-strip" id="intel-strip" aria-label="Live intel">
+            <div class="ix-cell" data-ix="weather"><span class="ix-lbl">WX</span><span class="ix-val">SYNC…</span></div>
+            <div class="ix-cell" data-ix="crypto"><span class="ix-lbl">BTC</span><span class="ix-val">SYNC…</span></div>
+            <div class="ix-cell" data-ix="space"><span class="ix-lbl">APOD</span><span class="ix-val">SYNC…</span></div>
+            <div class="ix-cell" data-ix="flights"><span class="ix-lbl">AIR</span><span class="ix-val">SYNC…</span></div>
+            <div class="ix-cell" data-ix="papers"><span class="ix-lbl">PAP</span><span class="ix-val">SYNC…</span></div>
         </div>
         <div id="message-container" class="feed-scroll">
             <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">Welcome back, Sir. Ask me anything below, or press ⌘K for commands.</span></div>
@@ -476,6 +484,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=54"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=59"></script>
 </body>
 </html>
