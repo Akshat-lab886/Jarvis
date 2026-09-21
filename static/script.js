@@ -122,18 +122,21 @@ function setConnState(online) {
     if (d) d.classList.toggle('off', !online);
 }
 
-// Connection status
+// Connection status — quiet ticker note on reconnect; no transcript rows.
 socket.on('connect', () => {
     console.log('Connected to Jarvis server');
     setConnState(true);
     updateStatus('SYSTEMS NOMINAL');
-    addMessage("SYSTEM: Connected to Jarvis");
+    if (window._bootedOnce) {
+        const tl = document.getElementById('ticker-line');
+        if (tl) tl.textContent = 'LINK RECOVERED · ' + new Date().toLocaleTimeString('en-US', { hour12: false });
+    }
+    window._bootedOnce = true;
 });
 
 socket.on('disconnect', () => {
     console.log('Disconnected from Jarvis server');
     setConnState(false);
-    addMessage("SYSTEM: Connection lost");
     updateStatus("DISCONNECTED", "offline");
 });
 
@@ -207,9 +210,10 @@ socket.on('ai_text_stream_end', () => {
 
 // Live Agent Log — a contained overlay: capped rows, auto-hide after a
 // quiet beat, and an explicit dismiss. Rows live in .term-body so the
-// header + close control never scroll away.
+// header + close control never scroll away. Muted at boot so it never
+// covers the idle deck; a user command unmutes it.
 const TERMINAL_MAX_ROWS = 120;
-let terminalMuted = false;
+let terminalMuted = true;
 let terminalHideTimer = null;
 
 function terminalAutoHide() {
@@ -533,13 +537,21 @@ window.__emitVitals = function (vitals) {
     if (hc) hc.textContent = String(vitals.cpu);
     const hs = document.getElementById('hero-status');
     if (hs) {
-        // Real fleet state beats a static slogan (density law).
+        // Real fleet state beats a static slogan (density law); a live
+        // load warning pins the pill until load clears.
         const n = (window._fleetOnline != null) ? window._fleetOnline : null;
-        hs.textContent =
-            vitals.cpu > 85 ? 'HIGH LOAD — CPU ' + vitals.cpu + '%' :
-            vitals.battery < 15 ? 'POWER LOW — ' + vitals.battery + '%' :
-            n != null ? `FLEET ${n} ONLINE · NOMINAL` :
-            'ALL SYSTEMS NOMINAL';
+        if (vitals.cpu > 85) {
+            hs.textContent = 'HIGH LOAD — CPU ' + vitals.cpu + '%';
+            hs.dataset.pin = 'load';
+        } else if (vitals.battery < 15) {
+            hs.textContent = 'POWER LOW — ' + vitals.battery + '%';
+            hs.dataset.pin = 'load';
+        } else {
+            hs.textContent = n != null
+                ? `FLEET ${n} ONLINE · NOMINAL`
+                : 'ALL SYSTEMS NOMINAL';
+            delete hs.dataset.pin;
+        }
     }
 
     // Timestamp
@@ -996,7 +1008,6 @@ if (chatInput && cmdWrap) {
     });
 }
 
-// --- CHAT INPUT ---
 function sendText(text) {
     text = text || chatInput.value.trim();
     if (text) {
@@ -1875,8 +1886,8 @@ function formatMarkdown(text) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
     
-    escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(0,0,0,0.4);padding:8px 12px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);overflow-x:auto;margin:6px 0;font-family:var(--font-mono);font-size:12px;"><code>$1</code></pre>');
-    escaped = escaped.replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:3px;font-family:var(--font-mono);font-size:12px;">$1</code>');
+    escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre style="background:var(--bg-1);padding:8px 12px;border-radius:0;border:1px solid var(--line-soft);overflow-x:auto;margin:6px 0;font-family:var(--font-mono);font-size:12px;"><code>$1</code></pre>');
+    escaped = escaped.replace(/`([^`]+)`/g, '<code style="background:var(--bg-1);padding:2px 6px;border-radius:0;font-family:var(--font-mono);font-size:12px;">$1</code>');
     escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     escaped = escaped.replace(/\n/g, '<br>');
@@ -2914,6 +2925,7 @@ if (studyBtn) {
             const res = await fetch('/api/providers');
             if (!res.ok) return;
             const d = await res.json();
+            setFleetFromProviders(d);
             renderFleet(d);
             renderProviders(d);
             renderMcp(d);
@@ -2922,13 +2934,30 @@ if (studyBtn) {
     window.refreshLlmFleet = refreshLlm;   // hook point for openPanel
 
     // Publish live fleet size for the hero gauge status line.
+    // Shape: { providers: [ {name, ...} ] }. Idempotent: also rewrites
+    // the hero pill when it is not pinned to a load warning.
     async function publishFleetCount() {
         try {
             const res = await fetch('/api/providers');
             if (!res.ok) return;
             const d = await res.json();
-            window._fleetOnline = (d.providers || []).length;
+            setFleetFromProviders(d);
         } catch (_) { /* offline */ }
+    }
+    function setFleetFromProviders(d) {
+        const provs = (d && d.providers) || [];
+        window._fleetOnline = provs.length;
+        window._fleetName = provs.length ? String(provs[0].name || provs[0]) : '';
+        // Mirror into the idle-deck footer: FLEET n · first-name.
+        const im = document.getElementById('im-fleet');
+        if (im) im.textContent = provs.length
+            ? `${provs.length} · ${window._fleetName.split('/').pop()}`
+            : '—';
+        // Hero pill follows fleet when it is not pinned to a load warning.
+        const hs = document.getElementById('hero-status');
+        if (hs && hs.dataset.pin !== 'load' && provs.length) {
+            hs.textContent = `FLEET ${provs.length} ONLINE · NOMINAL`;
+        }
     }
     publishFleetCount();
     setInterval(publishFleetCount, 60000);
@@ -3093,5 +3122,23 @@ if (studyBtn) {
                       'warn', 5000);
             setTimeout(() => location.href = '/onboarding', 1600);
         }
+
+        // Idle-meta strip: mirror live strip data into the deck's footer row.
+        // Shows once real data arrives; hides as soon as chat flows.
+        try {
+            const im = document.getElementById('idle-meta');
+            if (im) {
+                const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+                set('im-engine', String(d.status || 'OK').toUpperCase());
+                const fl = (window._fleetOnline != null)
+                    ? `${window._fleetOnline} · ${String((window._fleetName || '')).split('/').pop()}`.replace(' · $', '')
+                    : 'SYNC…';
+                const fle = document.getElementById('im-fleet');
+                if (fle && fle.textContent === '—') fle.textContent = fl;
+                set('im-next', '—');
+                set('im-budget', d.budget ? `${Number(d.budget.spent_usd || 0).toFixed(2)}/${Number(d.budget.limit_usd || 0).toFixed(2)}` : '—');
+                im.classList.add('live');
+            }
+        } catch (_) {}
     } catch (_) {}
 })();

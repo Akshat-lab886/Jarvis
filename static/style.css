@@ -74,8 +74,18 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #3A424E; }
 
 /* HUD corner brackets — §9 (fixed overlay, pointer-events none) */
-.hud-frame { position: fixed; inset: 0; z-index: 4; display: flex;
-             flex-wrap: wrap; pointer-events: none; }
+/* dead nodes from earlier layers — hud corners only ever existed on the
+   dark theme; parchment killed them but left the orphan markup styled */
+.hud-frame { display: none !important; }
+body.theme-parchment .hud-frame { display: none !important; }
+
+/* MOTION LAW: only the §9 cinematic devices keep time — stream cursor
+   blink, live-dot/reactor/core pulse, header waveform, voice scope +
+   voice cursor. Everything else cuts instantly. */
+.msg { animation: none; }
+.palette { animation: none; }
+.mobile-mic-btn.listening { animation: none; }
+body.theme-parchment .drawer { transition: none; }
 .hud-frame span {
     display: block; width: 18px; height: 18px;
     border: 1px solid rgba(255, 176, 0, .35); box-sizing: border-box;
@@ -2028,6 +2038,77 @@ body.theme-parchment .hero-band {
     content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
     background: var(--accent-hi); opacity: .9;
 }
+
+/* — hero band: LEFT 3px spine (grid-locked), no border-shadow split —
+   hero content is flush to the spine; meta stays a single band. */
+body.theme-parchment .hero-card {
+    border: none;
+    border-left: 3px solid var(--accent-hi);
+    box-shadow: none;
+}
+body.theme-parchment .hero-band { display: none; }
+
+/* — feed density: hero+head compact, transcript claims space — */
+body.theme-parchment .hero { padding: 10px 28px 4px; }
+body.theme-parchment .hero-card { padding: 14px 20px 14px; max-width: 760px; }
+body.theme-parchment .hero-meta { padding-bottom: 8px; margin-bottom: 8px; }
+body.theme-parchment .hm-lbl { position: static; }
+body.theme-parchment .hero-greet { font-size: 22px; }
+body.theme-parchment .hero-sub { margin-top: 3px; }
+body.theme-parchment .hero-rule { margin: 10px 0; }
+body.theme-parchment .feed-head { padding: 12px 28px 8px; }
+body.theme-parchment .feed-scroll { justify-content: flex-start; }
+
+/* — LOOP 2 idle-deck kit: ledger-tape + live meta — */
+
+/* LEDGER TAPE: system rows are ruled ledger lines (own class; .msg
+   stays the bordered record style) — */
+body.theme-parchment .msg.sys {
+    background: transparent; border: none; border-bottom: 1px dotted var(--line-soft);
+    box-shadow: none; padding: 3px 16px 3px 0;
+}
+body.theme-parchment .msg.sys .body { color: var(--text-3); font-size: 11px; font-family: var(--font-mono); letter-spacing: .02em; }
+
+/* — idle-meta: live instrument strip under the transcript; present once
+   real data arrives, hidden the instant conversation flows — */
+body.theme-parchment .idle-meta {
+    display: none; flex: none;
+    margin: 2px 28px 8px; padding: 6px 0 0;
+    border-top: 1px solid var(--line-soft);
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+body.theme-parchment .idle-meta.live { display: flex; gap: 26px; }
+body.theme-parchment .feed.busy .idle-meta { display: none; }
+body.theme-parchment .idle-meta .im-cell { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+body.theme-parchment .idle-meta .im-lbl { font-size: 8.5px; font-weight: 600; letter-spacing: .16em; color: var(--text-3); }
+body.theme-parchment .idle-meta .im-val { font-size: 11.5px; font-weight: 500; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+
+/* — narrow feed: hero stacks grid-locked (no overlap), tools clamp —
+   greet is the ONLY cell allowed to wrap; clock/meta hold one line. */
+@media (max-width: 720px) {
+    body.theme-parchment .hero-card {
+        display: grid; grid-template-columns: minmax(0,1fr) auto;
+        grid-template-areas:
+            "meta meta" "greet gauge" "tools tools" "chips chips";
+        gap: 4px 12px; align-items: center;
+        padding-top: 10px;
+    }
+    body.theme-parchment .hero-meta { grid-area: meta; flex-wrap: nowrap; padding-bottom: 6px; margin-bottom: 6px; min-width: 0; }
+    body.theme-parchment .hm-id { font-size: 12px; flex: none; }
+    body.theme-parchment .hm-lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 8px; letter-spacing: .14em; }
+    body.theme-parchment .hero-greet { grid-area: greet; min-width: 0; font-size: 24px; line-height: 1.1; overflow-wrap: normal; word-break: normal; hyphens: none; text-wrap: balance; }
+    body.theme-parchment .hero-tools { grid-area: tools; min-width: 0; }
+    body.theme-parchment .hero-chips { grid-area: chips; }
+    body.theme-parchment .hero-card .gauge { grid-area: gauge; }
+    body.theme-parchment .hero-tools .wordmark { display: none; }
+    body.theme-parchment .hstatus-pill { font-size: 9px; padding: 5px 10px; white-space: nowrap; max-width: 100%; }
+    body.theme-parchment .hero-chips button { padding: 7px 10px; }
+    body.theme-parchment .hero-chips button b { width: auto; }
+    body.theme-parchment .idle-meta { margin: 2px 18px 8px; gap: 16px; flex-wrap: wrap; }
+}
+
+/* — stale dead nodes from earlier layers — */
+body.theme-parchment .toast .abtn { background: var(--bg-1); }
 
 /* — capabilities rows: text chips replace emoji, cap-name ellipsis — */
 body.theme-parchment .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
