@@ -948,6 +948,21 @@ UPGRADE_STEPS = {
         {'step': 'Point Jarvis at a real language server (optional)',
          'instructions': 'Set JARVIS_LSP_CMD to a command template taking {file}, e.g. "pylsp --check {file}"'},
     ],
+    'mcp_tools': [
+        {'step': 'Add servers to config/mcp_servers.json',
+         'instructions': ('Open config/mcp_servers.json → add a server entry '
+                          '(command, args, env) → restart Jarvis so the pool connects')},
+    ],
+    'external_tools': [
+        {'step': 'Add a tool manifest to tools_registry/',
+         'instructions': ('Drop a JSON manifest (name, description, endpoint, '
+                          'auth) into tools_registry/ → it appears on next refresh')},
+    ],
+    'skills': [
+        {'step': 'Create skills from successful workflows',
+         'instructions': ('Finish a multi-step task well → Jarvis saves it as '
+                          'a reusable skill automatically; nothing to install')},
+    ],
 }
 
 
@@ -1267,13 +1282,13 @@ def format_expansion_plan(plan):
     """
     Format an expansion plan dict into a human-readable string.
     """
-    lines = [f"📋 Expansion plan: {plan['goal_title']}", '']
+    lines = [f"[PLAN] Expansion plan: {plan['goal_title']}", '']
     if plan['auto_packages']:
-        lines.append(f"🔧 Auto-installable: {', '.join(plan['auto_packages'])}")
+        lines.append(f"[AUTO] Auto-installable: {', '.join(plan['auto_packages'])}")
         lines.append('')
     for i, step in enumerate(plan['steps'], 1):
-        icon = '⚡' if step['auto'] else '📝'
-        lines.append(f"  {i}. {icon} {step['text']}")
+        tag = '[AUTO]' if step['auto'] else '[MANUAL]'
+        lines.append(f"  {i}. {tag} {step['text']}")
     if plan['manual_steps']:
         lines.append('')
         lines.append("Manual steps required:")

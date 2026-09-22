@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=59">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=61">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -147,12 +147,12 @@
                 </div>
             </div>
         </div>
-        <div class="intel-strip" id="intel-strip" aria-label="Live intel">
-            <div class="ix-cell" data-ix="weather"><span class="ix-lbl">WX</span><span class="ix-val">SYNC…</span></div>
-            <div class="ix-cell" data-ix="crypto"><span class="ix-lbl">BTC</span><span class="ix-val">SYNC…</span></div>
-            <div class="ix-cell" data-ix="space"><span class="ix-lbl">APOD</span><span class="ix-val">SYNC…</span></div>
-            <div class="ix-cell" data-ix="flights"><span class="ix-lbl">AIR</span><span class="ix-val">SYNC…</span></div>
-            <div class="ix-cell" data-ix="papers"><span class="ix-lbl">PAP</span><span class="ix-val">SYNC…</span></div>
+        <div class="intel-strip live" id="intel-strip" aria-label="Live intel">
+            <div class="ix-cell" data-ix="weather"><span class="ix-lbl">WX</span><span class="ix-val">loading…</span></div>
+            <div class="ix-cell" data-ix="crypto"><span class="ix-lbl">BTC</span><span class="ix-val">loading…</span></div>
+            <div class="ix-cell" data-ix="space"><span class="ix-lbl">APOD</span><span class="ix-val">loading…</span></div>
+            <div class="ix-cell" data-ix="flights"><span class="ix-lbl">AIR</span><span class="ix-val">loading…</span></div>
+            <div class="ix-cell" data-ix="papers"><span class="ix-lbl">PAP</span><span class="ix-val">loading…</span></div>
         </div>
         <div id="message-container" class="feed-scroll">
             <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">Welcome back, Sir. Ask me anything below, or press ⌘K for commands.</span></div>
@@ -167,7 +167,6 @@
 
     <!-- ═══ INSPECTOR RAIL · ordered by attention: approvals first ═══ -->
     <aside class="ops" id="ops-rail">
-
         <div class="ops-stack" id="stack-approvals">
             <div class="ops-head"><span class="ops-title"><span class="ops-dot warn"></span>Approvals</span><span class="act" id="approvals-refresh">Sync</span></div>
             <div class="ops-body" id="approvals-list"></div>
@@ -217,6 +216,7 @@
 
     <!-- ═══ COMMAND + TICKER ═══ -->
     <div class="cmdzone">
+        <div class="mobile-mic-btn" id="mobile-mic-btn" title="Listen for a command (browser voice)" aria-label="Voice command">Talk</div>
         <div class="cmd" id="cmd-wrap">
             <span class="prompt">›</span>
             <input type="text" id="chat-input" placeholder="Ask Jarvis anything…" autocomplete="off">
@@ -439,7 +439,6 @@
         <div class="term-head"><span class="tl-accent">AGENT LOG</span><button id="terminal-close" title="Dismiss (logs pause until your next command)">✕</button></div>
         <div class="term-body"></div>
     </div>
-    <div class="mobile-mic-btn" id="mobile-mic-btn" title="Listen for a command (browser voice)" aria-label="Voice command">Talk</div>
 
     <!-- ═══ VOICE TALK MODE B — retro vector-arcade full-takeover ═══ -->
     <div class="voice-b" id="voice-b" aria-hidden="true">
@@ -484,6 +483,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=59"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=61"></script>
 </body>
 </html>

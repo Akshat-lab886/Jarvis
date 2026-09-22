@@ -216,12 +216,22 @@ class GoalStore:
     # ---------------- CRUD ---------------- #
 
     def set(self, title, deadline='', priority='normal'):
-        """Create a goal.  Returns the goal dict (or None when off)."""
+        """Create a goal.  Returns the goal dict (or None when off).
+
+        Dedupes: an identical open goal (same title, case-insensitive)
+        returns the existing goal instead of creating a twin — repeated
+        ACQUIRE clicks must not stack duplicate rows.
+        """
         if not enabled():
             return None
         title = str(title or '').strip()[:300]
         if not title:
             return None
+        with self._lock:
+            for g in self._goals:
+                if (g.get('status') in ('open', 'in_progress')
+                        and str(g.get('title', '')).strip().lower() == title.lower()):
+                    return dict(g)
         if not deadline:
             deadline = parse_deadline(title)
         priority = str(priority or 'normal').lower()

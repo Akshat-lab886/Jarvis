@@ -47,6 +47,8 @@ function updateHUDClock() {
     if (sc) sc.textContent = t;
     if (rc) rc.textContent = t;
     if (hc) hc.textContent = t;
+    const it = document.querySelector('#intro-msg .ts');
+    if (it && it.textContent.trim() === '--:--:--') it.textContent = t;
 }
 setInterval(updateHUDClock, 1000);
 updateHUDClock();
@@ -2190,7 +2192,7 @@ if (studyBtn) {
                 const dl = g.deadline ? g.deadline.slice(5, 16).replace('T', ' ') : 'no deadline';
                 return `<div class="row" data-goal-id="${escapeHtml(g.id)}">
                     <div class="r1">
-                        <span class="t" title="${escapeHtml(g.title)}">${over ? '⏰ ' : ''}${escapeHtml(g.title.slice(0, 44))}</span>
+                        <span class="t" title="${escapeHtml(g.title)}">${over ? '[LATE] ' : ''}${escapeHtml(g.title.slice(0, 44))}</span>
                         <span class="m">${pct}% · ${escapeHtml(dl)}${done ? ' · DONE' : ''}</span>
                     </div>
                     <div class="r2">
@@ -2279,10 +2281,19 @@ if (studyBtn) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({capabilities: [capName], auto: true})
         }).then(r => r.json()).then(data => {
+            const plan = data.plan || {};
+            const steps = plan.steps || [];
+            const autoPkgs = plan.auto_packages || [];
             if (data.error) {
                 btn.textContent = 'FAILED';
+            } else if (!steps.length && !autoPkgs.length) {
+                // Nothing to acquire — capability is either live or has no
+                // setup path. Say so honestly instead of a dead PLAN button.
+                btn.textContent = '[ N/A ]';
+                btn.disabled = true;
+                btn.title = (plan.goal_title || 'No acquisition steps available');
             } else {
-                btn.textContent = '✓ PLAN CREATED';
+                btn.textContent = '[ PLAN ]';
                 // Refresh goals stack if it exists
                 if (typeof refreshGoals === 'function') refreshGoals();
                 // Show the plan in a toast
@@ -2325,7 +2336,7 @@ if (studyBtn) {
             if (mobileQr) { mobileQr.style.display = 'none'; mobileQr.innerHTML = ''; }
             if (mobilePairLink) {
                 mobilePairLink.style.display = '';
-                mobilePairLink.innerHTML = '<span class="m">⚠ dashboard is on loopback (' +
+                mobilePairLink.innerHTML = '<span class="m">[WARN] dashboard is on loopback (' +
                     escapeHtml(hub) + ') — phones cannot reach it. Re-open the dashboard via LAN IP / Tailscale name, then PAIR again.</span>';
             }
             return;
@@ -3148,9 +3159,14 @@ if (studyBtn) {
         } catch (_) {}
 
         // Intel strip: one GET to /api/intel hydrates WX/BTC/APOD/AIR/PAP.
-        // Dead cells show a quiet dash; strip appears only when ≥1 cell lives.
+        // Dead cells show a quiet dash; strip is visible from first paint
+        // (server-rendered live class) and only hides once chat flows.
+        // Abort after 9s so a slow vendor never blocks first paint.
         try {
-            const r = await fetch('/api/intel');
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 9000);
+            const r = await fetch('/api/intel', {signal: ctl.signal});
+            clearTimeout(to);
             if (r.ok) {
                 const ix = await r.json();
                 const cells = (ix && ix.cells) || {};
@@ -3162,7 +3178,7 @@ if (studyBtn) {
                     const val = el.querySelector('.ix-val');
                     if (!val) return;
                     if (cells[k] && cells[k].ok) {
-                        val.textContent = String(cells[k].text).split(/[.;]/)[0].slice(0, 60);
+                        val.textContent = String(cells[k].text).slice(0, 60);
                         el.classList.remove('bad');
                         alive += 1;
                     } else {

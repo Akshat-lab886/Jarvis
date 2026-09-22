@@ -74,10 +74,57 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #3A424E; }
 
 /* HUD corner brackets — §9 (fixed overlay, pointer-events none) */
-/* dead nodes from earlier layers — hud corners only ever existed on the
-   dark theme; parchment killed them but left the orphan markup styled */
-.hud-frame { display: none !important; }
-body.theme-parchment .hud-frame { display: none !important; }
+/* PARCHMENT wins over every dark-era layer: no emoji-ghost nodes, no
+   dark glass, no cheap-era cards. Anything below that re-adds them is
+   a regression — this block is the last word. */
+body.theme-parchment .panel-backdrop,
+body.theme-parchment .arg-dialog-backdrop,
+body.theme-parchment .palette-backdrop { background: rgba(43,30,18,.42); backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.theme-parchment .drawer { background: var(--bg-1); backdrop-filter: none; -webkit-backdrop-filter: none; transition: none; }
+body.theme-parchment .terminal-box { background: var(--bg-1); }
+body.theme-parchment .msg.streaming { animation: none; }
+/* dead mono ghosts: intro/welcome rows never show dot leaders */
+body.theme-parchment .msg.intro .ts::after { content: none; }
+body.theme-parchment .msg.intro { background-image: none; }
+/* dead flex ghosts inside the intro grid row: · leaders and ghost ts */
+body.theme-parchment .msg.intro .dir { display: none; }
+body.theme-parchment .msg.intro .ts { display: none; }
+body.theme-parchment .msg.intro { grid-template-columns: 1fr; }
+/* 820: top-search clips under the ⌘K chip — clamp it inside the strip */
+@media (max-width: 1150px) {
+    body.theme-parchment .top-search { min-width: 0; max-width: 190px; }
+}
+/* 820: icon-column sidebar clips labels — kill the zero-font leftovers.
+   Dark-era rule (line ~1045) zeroes button text but the code text lives
+   directly in the button, so force the code size back. */
+@media (max-width: 1080px) {
+    body.theme-parchment .brand-name small { display: none; }
+    body.theme-parchment .sidebar .fnav-label { display: none; }
+    body.theme-parchment .sidebar .side-foot { display: none; }
+    /* dark-era zero-font rule (line ~1053) has equal specificity but
+       comes later in the file — beat it with !important, not order. */
+    body.theme-parchment .sidebar .fnav button {
+        font-size: 10px !important; justify-content: center; padding: 9px 0;
+    }
+    body.theme-parchment .sidebar .fnav button::after { content: none !important; }
+}
+/* gauge numeral never clips its ring: numerals shrink, ring holds */
+body.theme-parchment .gread { overflow: hidden; }
+body.theme-parchment .gread b { line-height: 1; }
+/* 480: mobile mic lives in the COMMAND ZONE flow (above the input —
+   a command surface, never a rail widget sandwiched between stacks).
+   Desktop + wide: hidden (cmd row already has Talk). */
+body.theme-parchment .mobile-mic-btn { display: none; }
+@media (max-width: 720px) {
+    body.theme-parchment .mobile-mic-btn {
+        display: flex; align-items: center; justify-content: center;
+        position: static;
+        width: auto; height: auto;
+        margin: 0 0 8px; padding: 12px;
+        box-shadow: 0 6px 24px rgba(43,30,18,.35), 0 0 10px var(--accent-glow);
+    }
+}
+}
 
 /* MOTION LAW: only the §9 cinematic devices keep time — stream cursor
    blink, live-dot/reactor/core pulse, header waveform, voice scope +
@@ -2273,9 +2320,10 @@ body.theme-parchment .arg-dialog-backdrop { background: rgba(43,30,18,.45); back
 /* — INTEL STRIP: one ruled live-data row under the hero. Five cells fed
    by GET /api/intel (weather, crypto, space, flights, papers). Ruled
    ledger style like idle-meta: top hairline, mono labels, ellipsis vals.
-   Hides with the hero once conversation flows (.feed.busy). — */
+   Visible from first paint (server-rendered .live + loading text);
+   JS only replaces values. Hides once conversation flows (.feed.busy). — */
 body.theme-parchment .intel-strip {
-    display: none; flex: none;
+    display: flex; flex: none;
     margin: 2px 28px 0; padding: 7px 0 6px;
     border-top: 1px solid var(--line-soft);
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;

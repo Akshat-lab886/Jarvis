@@ -1196,33 +1196,65 @@ def api_intel():
             if not v:
                 return {'ok': False, 'why': 'empty'}
             t = str(v)[:220]
-            if 'unavailable' in t.lower():
+            low = t.lower()
+            if 'unavailable' in low or "couldn't" in low or "could not" in low:
                 return {'ok': False, 'why': t[:80]}
             return {'ok': True, 'text': t}
         except Exception as exc:  # noqa: BLE001 — degrade, never 500
             return {'ok': False, 'why': str(exc)[:80]}
 
+    def short(t, n=48):
+        """Strip the vendor preamble (e.g. 'The ISS is currently over…')
+        so a 1-line cell fits the ledger. Cut at sentence, else words."""
+        t = ' '.join(str(t).split())
+        for p in ('. ', '! ', '? '):
+            if p in t:
+                t = t.split(p)[0]
+                break
+        if len(t) > n:
+            t = t[:n].rsplit(' ', 1)[0] + '…'
+        return t
+
     out = {'ts': int(now), 'cells': {}}
     try:
-        from utils.weather_api import weather_report
-        out['cells']['weather'] = cell(weather_report, city='London')
+        from utils.weather_api import current_weather
+        # Fixed London coords — no geocode/IP hop, returns in ~1s.
+        w = cell(current_weather, city=None, lat=51.5074, lon=-0.1278)
+        if w.get('ok'):
+            w['text'] = short(w['text'])
+        out['cells']['weather'] = w
     except Exception as exc:
         out['cells']['weather'] = {'ok': False, 'why': str(exc)[:80]}
     try:
         from utils.info_api import crypto_price, space_apod
-        out['cells']['crypto'] = cell(crypto_price, 'bitcoin')
-        out['cells']['space'] = cell(space_apod)
+        c = cell(crypto_price, 'bitcoin')
+        if c.get('ok'):
+            m = __import__('re').search(r'\$[\d,]+(?:\.\d+)?(?: \([+-][\d.]+% 24h\))?', c['text'])
+            c['text'] = m.group(0) if m else short(c['text'])
+        out['cells']['crypto'] = c
+        # APOD title only (~2s with DEMO_KEY); ISS Notify is down.
+        s = cell(space_apod)
+        if s.get('ok'):
+            s['text'] = short(s['text'].replace('NASA APOD: ', 'APOD '), 60)
+        out['cells']['space'] = s
     except Exception as exc:
         out['cells']['crypto'] = {'ok': False, 'why': str(exc)[:80]}
         out['cells']['space'] = out['cells'].get('space', {'ok': False, 'why': 'n/a'})
     try:
         from utils.flight_api import flights_near
-        out['cells']['flights'] = cell(flights_near, 51.47, -0.4543, 80)
+        f = cell(flights_near, 51.47, -0.4543, 80)
+        if f.get('ok'):
+            m = __import__('re').match(r'(\d+) aircraft', f['text'])
+            f['text'] = f"{m.group(1)} aircraft near LHR" if m else short(f['text'])
+        out['cells']['flights'] = f
     except Exception as exc:
         out['cells']['flights'] = {'ok': False, 'why': str(exc)[:80]}
     try:
         from utils.ext_api import research
-        out['cells']['papers'] = cell(research, 'large language models')
+        p = cell(research, 'large language models')
+        if p.get('ok'):
+            p['text'] = short(p['text'], 60)
+        out['cells']['papers'] = p
     except Exception as exc:
         out['cells']['papers'] = {'ok': False, 'why': str(exc)[:80]}
 
