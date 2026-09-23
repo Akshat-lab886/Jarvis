@@ -26,6 +26,7 @@ import os
 import platform
 import logging
 import subprocess
+import tempfile
 
 logger = logging.getLogger("Jarvis.ComputerUse")
 
@@ -288,10 +289,12 @@ class ComputerUse:
         """Capture the screen without any extra dependency on macOS."""
         if not enabled():
             return "Computer use disabled."
-        base_dir = os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))
+        # Phase 1 hardening: captured screens are sensitive — never put
+        # them in the web-served static/ tree (grep: zero consumers of the
+        # old path). Private temp dir instead; callers may still pass
+        # out_path explicitly.
         out_path = out_path or os.path.join(
-            base_dir, 'static', 'computer_view.png')
+            tempfile.gettempdir(), 'jarvis_computer_view.png')
         try:
             if _SYSTEM == 'Darwin':
                 subprocess.run(['screencapture', '-x', out_path],

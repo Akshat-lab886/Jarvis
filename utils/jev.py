@@ -244,11 +244,15 @@ def risk_label(verdict):
 # --------------------------------------------------------------------- #
 #  2 · Per-step guardrail inside the desktop vision loop
 # --------------------------------------------------------------------- #
-def screen_step(task, action):
+def screen_step(task, action, timeout=None):
     """Screen one proposed desktop step before it is executed.
 
     Returns ``{on_task, hazard, model, ms}`` or ``None`` (fail-open).
     Never raises.
+
+    *timeout* caps this one gateway call (desktop loop passes
+    JEV_STEP_TIMEOUT_S, default 2.0 s — measured gate latency is ~1.5 s,
+    so a tighter cap would fail-open every call and disable the gate).
     """
     if not enabled():
         return None
@@ -274,7 +278,7 @@ def screen_step(task, action):
                                  "outbound send",
                          "false": "Ordinary UI interaction"},
         },
-    })
+    }, timeout=timeout)
     if not data:
         return None
     ans = data.get("answers") or {}
