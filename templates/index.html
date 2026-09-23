@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=61">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=64">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -156,6 +156,17 @@
         </div>
         <div id="message-container" class="feed-scroll">
             <div class="msg intro" id="intro-msg"><span class="ts">--:--:--</span><span class="dir">·</span><span class="body">Welcome back, Sir. Ask me anything below, or press ⌘K for commands.</span></div>
+            <div class="pulse" id="pulse" aria-label="System pulse">
+                <div class="pl-head"><span class="pl-t">SYSTEM PULSE</span><span class="pl-m">LIVE · 60t WINDOW</span></div>
+                <div class="pl-grid">
+                    <div class="pl-cell"><span class="pl-lbl">CPU</span><div class="pl-row"><b class="pl-val" id="pl-cpu">—</b><svg class="pl-spark" viewBox="0 0 60 18" width="60" height="18"><polyline id="sp-cpu" points=""/></svg></div></div>
+                    <div class="pl-cell"><span class="pl-lbl">MEM</span><div class="pl-row"><b class="pl-val" id="pl-mem">—</b><svg class="pl-spark" viewBox="0 0 60 18" width="60" height="18"><polyline id="sp-mem" points=""/></svg></div></div>
+                    <div class="pl-cell"><span class="pl-lbl">DSK</span><div class="pl-row"><b class="pl-val" id="pl-dsk">—</b><svg class="pl-spark" viewBox="0 0 60 18" width="60" height="18"><polyline id="sp-dsk" points=""/></svg></div></div>
+                    <div class="pl-cell"><span class="pl-lbl">BATT</span><div class="pl-row"><b class="pl-val" id="pl-batt">—</b></div></div>
+                </div>
+                <div class="pl-ev-head"><span>EVENTS</span><span class="pl-ev-m">TAIL 7 · SANITIZED</span></div>
+                <div class="pl-events" id="pl-events"><div class="pl-ev"><span class="t">--:--:--</span><span class="x">awaiting first tick…</span></div></div>
+            </div>
         </div>
         <div class="idle-meta" id="idle-meta">
             <div class="im-cell"><span class="im-lbl">ENGINE</span><span class="im-val" id="im-engine">SYNC…</span></div>
@@ -483,6 +494,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=61"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=64"></script>
 </body>
 </html>

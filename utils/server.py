@@ -1233,9 +1233,10 @@ def api_intel():
             c['text'] = m.group(0) if m else short(c['text'])
         out['cells']['crypto'] = c
         # APOD title only (~2s with DEMO_KEY); ISS Notify is down.
+        # Strip the vendor prefix — the cell label already says APOD.
         s = cell(space_apod)
         if s.get('ok'):
-            s['text'] = short(s['text'].replace('NASA APOD: ', 'APOD '), 60)
+            s['text'] = short(s['text'].replace('NASA APOD: ', '').replace('APOD ', ''), 60)
         out['cells']['space'] = s
     except Exception as exc:
         out['cells']['crypto'] = {'ok': False, 'why': str(exc)[:80]}

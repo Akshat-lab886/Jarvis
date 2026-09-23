@@ -184,6 +184,8 @@ socket.on('ai_text_stream', (data) => {
     if (!_streamState.row) {
         const intro = document.getElementById('intro-msg');
         if (intro) intro.remove();
+        const pulse0 = document.getElementById('pulse');
+        if (pulse0) { pulse0.remove(); if (window._pulseStop) window._pulseStop(); }
         // Ops-deck grammar — identical to addMessage('JARVIS: …').
         const row = document.createElement('div');
         const ts = new Date().toLocaleTimeString('en-US',
@@ -561,6 +563,9 @@ window.__emitVitals = function (vitals) {
     if (vitalsTime && vitals.timestamp) {
         vitalsTime.textContent = vitals.timestamp;
     }
+
+    // SYSTEM PULSE: idle-deck samples for sparklines + big numerals.
+    if (window._pulseSample) window._pulseSample(vitals);
 };
 
 socket.on('system_vitals', (vitals) => {
@@ -573,6 +578,87 @@ socket.on('system_vitals', (vitals) => {
 fetch('/api/vitals').then(r => r.ok ? r.json() : null).then(v => {
     if (v && !window._vitalsSeen) window.__emitVitals(v);
 }).catch(() => {});
+
+// --- SYSTEM PULSE: idle-deck instrumentation (kills the transcript void
+// with live sparklines + a sanitized event tail; removed on first msg). ---
+(function initPulse() {
+    const hist = { cpu: [], ram: [], dsk: [] };
+    const WIN = 60;
+    let ivLogs = null;
+
+    function spark(id, arr) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (arr.length < 2) { el.setAttribute('points', ''); return; }
+        const n = arr.length;
+        const pts = arr.map((v, i) => {
+            const x = n === 1 ? 0 : (i * 59) / (n - 1);
+            const y = 17 - (Math.max(0, Math.min(100, v)) / 100) * 16;
+            return x.toFixed(1) + ',' + y.toFixed(1);
+        });
+        el.setAttribute('points', pts.join(' '));
+    }
+
+    window._pulseSample = function (v) {
+        if (!document.getElementById('pulse')) return;
+        const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+        const push = (key, val, vid, sid, txt) => {
+            if (val == null || isNaN(val)) return;
+            hist[key].push(+val);
+            if (hist[key].length > WIN) hist[key].shift();
+            set(vid, txt);
+            spark(sid, hist[key]);
+        };
+        push('cpu', v.cpu, 'pl-cpu', 'sp-cpu', v.cpu + '%');
+        push('ram', v.ram, 'pl-mem', 'sp-mem', v.ram + '%');
+        push('dsk', v.disk, 'pl-dsk', 'sp-dsk', v.disk + '%');
+        if (v.battery != null) set('pl-batt', v.battery + '%' + (v.charging ? ' · CHG' : ''));
+    };
+
+    function sanitize(s) {
+        return String(s)
+            .replace(/(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+/g, '$1***')
+            .replace(/((?:api[_-]?key|token|secret)[=: ]+)\S+/gi, '$1***');
+    }
+
+    function parseLine(raw) {
+        // "2026-09-23 11:03:39,861 - Jarvis.LLM.Router - INFO - msg"
+        const m = raw.match(/^\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})[\.,]\d+ - ([\w.]+) - \w+ - (.*)$/);
+        if (m) {
+            const mod = m[2].split('.').pop().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 9);
+            return { t: m[1], k: mod || 'LOG', x: sanitize(m[3]) };
+        }
+        return {
+            t: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            k: 'LOG', x: sanitize(raw),
+        };
+    }
+
+    async function pollEvents() {
+        const box = document.getElementById('pl-events');
+        if (!box) return;
+        try {
+            const r = await fetch('/api/logs?n=7');
+            if (!r.ok) return;
+            const d = await r.json();
+            if (!Array.isArray(d.lines) || !d.lines.length) return;
+            box.innerHTML = d.lines.map(l => {
+                const e = parseLine(l);
+                return '<div class="pl-ev"><span class="t">' + e.t +
+                    '</span><span class="k">' + e.k +
+                    '</span><span class="x">' + escapeHtml(e.x.slice(0, 120)) + '</span></div>';
+            }).join('');
+        } catch (_) {}
+    }
+
+    pollEvents();
+    ivLogs = setInterval(pollEvents, 6000);
+
+    window._pulseStop = function () {
+        if (ivLogs) clearInterval(ivLogs);
+        ivLogs = null;
+    };
+})();
 
 // Smart Home device status — build cards on demand, delegate clicks
 const DEVICE_LIST = [
@@ -800,11 +886,11 @@ if (SpeechRecognition) {
         let errorMsg = "Mic Error: " + event.error;
 
         if (event.error === 'not-allowed') {
-            errorMsg = "🚫 Permission denied! Check settings.";
+            errorMsg = "Permission denied! Check settings.";
         } else if (event.error === 'no-speech') {
             errorMsg = "No speech detected.";
         } else if (event.error === 'audio-capture') {
-            errorMsg = "🚫 No microphone found!";
+            errorMsg = "No microphone found!";
         } else if (event.error === 'network') {
             errorMsg = "Network error - need internet";
         }
@@ -1913,6 +1999,8 @@ function addMessage(text) {
     if (!messageContainer) return;
     const intro = document.getElementById('intro-msg');
     if (intro) intro.remove();
+    const pulse1 = document.getElementById('pulse');
+    if (pulse1) { pulse1.remove(); if (window._pulseStop) window._pulseStop(); }
 
     let dir = 'j', clean = String(text || '');
     if (clean.startsWith('YOU:')) { dir = 'u'; clean = clean.replace(/^YOU:\s*/i, ''); }
@@ -2393,7 +2481,7 @@ if (studyBtn) {
             const seen = d.last_seen
                 ? new Date(d.last_seen * 1000).toLocaleString() : 'never';
             return `<div class="row mob-row"><div class="r1">`
-                + `<span class="t">📱 ${escapeHtml(d.name || d.device_id)}</span>`
+                + `<span class="t">${escapeHtml(d.name || d.device_id)}</span>`
                 + `<span class="m">seen ${escapeHtml(seen)}</span>`
                 + `<span class="btns" style="margin-left:auto;">`
                 + `<button class="tbtn mob-revoke" data-dev="${escapeHtml(d.device_id)}">REVOKE</button>`
