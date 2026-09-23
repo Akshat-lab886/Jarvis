@@ -1,5 +1,5 @@
 """
-Jarvis Desktop Agent (v21)
+Jarvis Desktop Agent (v21.1)
 
 Gives Jarvis eyes and hands on the user's desktop:
 
@@ -31,24 +31,35 @@ Phase 2 — chunked planning:
   loop executes up to ``PLAN_CHUNK`` of them (settle + Jev gate AFTER
   EVERY action — chunking never skips a gate), then re-plans from a
   fresh/reused frame.  Model calls per task ≈ ceil(actions / chunk) + 1
-  instead of one per action (the measured CUA bottleneck is model calls,
-  not code — OSWorld-Human).  Legacy single-action replies
-  ``{"type": ...}`` still parse, so a model that ignores the plan format
-  degrades to exactly the v20 behaviour.  A call-budget guard
-  (2×max_steps+4) stops a no-progress loop even if every step is
-  gate-skipped.
+  instead of one per action.  Legacy single-action replies
+  ``{"type": ...}`` still parse (graceful degradation to v20 pacing).
+  A call-budget guard (2×max_steps+4) stops a no-progress loop even if
+  every step is gate-skipped.
 
 Phase 3 — AX grounding + widened action space:
   ``computer_use.ax_tree()`` snapshots the frontmost app's accessibility
-  tree (fail-open → ``[]`` → coords-only prompt = pre-Phase-3 behaviour)
-  and the plan prompt carries bounded element refs: click them with
-  ``{"type":"click_el","ref":N}`` — executed in BACKGROUND via
-  ``get_driver().click_element`` (cursor never moves).  New ops close
-  the gaps the eval suite's ``hotkey_gap`` marker proved:
-  ``hotkey`` chords (⌘⇧3 now expressible), ``drag``, ``scroll``,
-  right/double click (``button``/``dbl`` on click), ``wait``.
-  ``hotkey`` is CONTENT-BEARING (⌘V pastes!) so it is Jev-gated like
-  type/key; pure pointer ops stay ungated, same trust as today's clicks.
+  tree (fail-open → ``[]`` → coords-only prompt) and the plan prompt
+  carries bounded element refs: ``{"type":"click_el","ref":N}`` runs in
+  BACKGROUND via ``get_driver().click_element`` (cursor never moves).
+  New ops: ``hotkey`` chords, ``drag``, ``scroll``, right/double click,
+  ``wait``.  ``hotkey`` is CONTENT-BEARING (⌘V pastes!) so it is
+  Jev-gated like type/key; pointer ops stay ungated (same trust as
+  today's clicks).
+
+v21.1 (self-review fixes)
+-------------------------
+* **AX circuit breaker** — a missing Automation permission makes
+  osascript BLOCK up to the driver's 12 s timeout; without a breaker
+  every plan call would eat that stall for the life of the run.  Now a
+  2 s-capped ping runs once per run (skips the tree entirely when
+  denied) and ANY empty/failed tree latches ``_ax_off`` for the rest of
+  the run (ref map cleared first — a stale ref must never click).
+* **Key-name normalization** — measured against
+  ``pyautogui.KEYBOARD_KEYS``: ``cmd``/``opt``/``control`` are NOT
+  valid keys (``command``/``alt``/``ctrl`` are), and the eval prompt
+  literally says "cmd+shift+3", so the model WOULD emit ``cmd`` →
+  KeyError → "Action failed".  Aliases applied to both ``key`` and
+  ``hotkey`` ops; single keys lowercased ("Enter" → "enter").
 
 Safety unchanged: pyautogui corner failsafe, Jev per-step gate
 fail-open, HITL approvals in the executor, bounded prompt/history.
@@ -61,6 +72,7 @@ import json
 import time
 import base64
 import logging
+import subprocess
 
 import pyautogui
 from PIL import Image, ImageChops
@@ -99,6 +111,13 @@ PLAN_CHUNK = max(1, int(os.getenv("DESKTOP_PLAN_CHUNK", "3")))
 AX_ENABLED = os.getenv("DESKTOP_AX", "1") != "0"
 AX_MAX_ELEMS = int(os.getenv("DESKTOP_AX_MAX", "40"))
 AX_LIST_MAX_CHARS = 900           # prompt budget for the element list
+AX_PING_TIMEOUT_S = float(os.getenv("DESKTOP_AX_PING_S", "2.0"))
+
+# v21.1 · aliases to names pyautogui actually accepts.  MEASURED against
+# pyautogui.KEYBOARD_KEYS: 'cmd'/'opt'/'control' → False;
+# 'command'/'alt'/'ctrl' → True.  The model (and our own eval prompt)
+# says "cmd+shift+3" — without this map the hotkey op dies with KeyError.
+_KEY_ALIASES = {"cmd": "command", "opt": "alt", "control": "ctrl"}
 
 SYSTEM_PROMPT = """You are a desktop automation agent controlling the user's computer.
 You receive a screenshot. Decide the NEXT FEW single actions (2-4; exactly 1 if unsure) that make progress on the task.
@@ -117,15 +136,23 @@ One action per plan item, in execution order. Forms:
 Coordinates are relative to the 1024-wide screenshot shown; click only elements you can actually see; prefer click_el refs when a UI ELEMENTS list is given."""
 
 
+def _norm_key(k):
+    """Lowercase + alias a key name to something pyautogui accepts."""
+    k = str(k if k is not None else "").strip().lower()
+    return _KEY_ALIASES.get(k, k)
+
+
 class DesktopAgent:
     def __init__(self, max_width=FRAME_MAX_WIDTH):
-        pyautogui.FAILAFE = True
+        pyautogui.FAILSAFE = True
         pyautogui.PAUSE = PYAUTOGUI_PAUSE
         self.max_width = max_width
         self.screen_w, self.screen_h = pyautogui.size()
         self.last_run = None          # Phase 0: per-run timing record
         self._last_img = None         # Phase 1: frame the model last saw
         self._ax_map = {}             # Phase 3: ref -> element dict
+        self._ax_ping = None          # v21.1: None=unknown, True/False
+        self._ax_off = False          # v21.1: circuit breaker (this run)
 
     # ------------------------------------------------------------------ #
     # Screen capture
@@ -226,17 +253,48 @@ class DesktopAgent:
     # ------------------------------------------------------------------ #
     # Phase 3 · AX grounding (fail-open → coords-only prompt)
     # ------------------------------------------------------------------ #
+    def _ax_ping_ok(self):
+        """2 s-capped Automation-permission probe.
+
+        System Events answers this instantly when allowed and BLOCKS on
+        the permission dialog when not — capping it turns "hang forever
+        x N plan calls" into at most one short stall per run.
+        """
+        try:
+            proc = subprocess.run(
+                ['osascript', '-e',
+                 'tell application "System Events" to name of first '
+                 'process whose frontmost is true'],
+                capture_output=True, text=True,
+                timeout=AX_PING_TIMEOUT_S)
+            return (proc.returncode == 0
+                    and bool((proc.stdout or '').strip()))
+        except Exception:
+            return False
+
     def _ax_bundle(self):
         """(element-lines, ms) for the plan prompt — '' on any failure.
 
         Fail-open: AX unavailable/disabled → coords-only prompt, i.e.
         exactly the pre-Phase-3 behaviour.  The ref map is RESET first so
         a stale ref can never click the wrong element.
+
+        Circuit breaker (v21.1): the driver's tree walk can block up to
+        its osascript timeout when Automation is denied — so probe once
+        per run with a 2 s-capped ping, and latch ``_ax_off`` after ANY
+        empty/failed tree (denied, hung, or windowless frontmost app).
+        Worst case cost per run: one ping stall — never N×12 s.
         """
         self._ax_map = {}
-        t0 = time.time()
-        if not AX_ENABLED:
+        if not AX_ENABLED or self._ax_off:
             return "", 0.0
+        t0 = time.time()
+        if self._ax_ping is None:
+            if not self._ax_ping_ok():
+                self._ax_ping = False
+                self._ax_off = True
+                return "", (time.time() - t0) * 1000
+            self._ax_ping = True
         try:
             from utils.computer_use import get_driver
             els = get_driver().ax_tree(max_elements=AX_MAX_ELEMS)
@@ -244,6 +302,7 @@ class DesktopAgent:
             els = []
         ms = (time.time() - t0) * 1000
         if not els:
+            self._ax_off = True     # denied / hung / windowless app
             return "", ms
         lines, chars = [], 0
         for e in els:
@@ -397,7 +456,9 @@ class DesktopAgent:
             if isinstance(keys, str):
                 keys = [k.strip() for k in re.split(r"[+\-,\s]+", keys)
                         if k.strip()]
-            keys = [str(k).lower() for k in (keys or [])][:6]
+            # v21.1: alias to names pyautogui accepts ('cmd' does NOT —
+            # measured against KEYBOARD_KEYS; the model says "cmd").
+            keys = [_norm_key(k) for k in (keys or [])][:6]
             if len(keys) < 2:
                 return f"Hotkey needs ≥2 keys, got {keys!r}"
             pyautogui.hotkey(*keys)
@@ -429,7 +490,8 @@ class DesktopAgent:
                 pyautogui.write(text, interval=TYPE_INTERVAL_S)
             return f"Typed: {text[:40]!r}"
         if atype == "key":
-            key = action.get("key", "")
+            # v21.1: lowercase + alias ("Enter"→"enter", "control"→"ctrl")
+            key = _norm_key(action.get("key"))
             if key:
                 pyautogui.press(key)
             return f"Pressed: {key}"
@@ -479,6 +541,8 @@ class DesktopAgent:
         run = {"task": str(task)[:200], "steps": [], "model_calls": 0,
                "gate_calls": 0, "t0": time.time()}
         self.last_run = run
+        self._ax_ping = None        # v21.1: fresh AX probe each run —
+        self._ax_off = False        # permission may have been granted since
 
         if not Config.GOOGLE_API_KEY and not Config.GROQ_API_KEY:
             return self._timings(

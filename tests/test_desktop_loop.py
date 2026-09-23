@@ -56,6 +56,13 @@ class LoopHarness(unittest.TestCase):
                        return_value=self.driver)
         p.start()
         self.addCleanup(p.stop)
+        # AX ping is a real osascript call (v21.1 circuit breaker) — stub
+        # it to "granted" so tests never pay the real permission stall
+        ps = mock.patch("utils.desktop_agent.subprocess.run",
+                        return_value=mock.Mock(returncode=0,
+                                               stdout="Finder\n"))
+        ps.start()
+        self.addCleanup(ps.stop)
 
     def run_agent(self, responses, max_steps=8, task="t",
                   gate=None, chunk=3):
@@ -417,6 +424,65 @@ class TestAXBundle(LoopHarness):
         with mock.patch.object(da, "AX_ENABLED", False):
             text, ms = agent._ax_bundle()
         self.assertEqual((text, ms), ("", 0.0))
+
+
+# --------------------------------------------------------------------- #
+# v21.1 · self-review regression tests
+# --------------------------------------------------------------------- #
+class TestSelfReviewFixes(LoopHarness):
+    """Regressions for the issues the v21.1 self-review found."""
+
+    def test_hotkey_cmd_alias_normalized(self):
+        # MEASURED: 'cmd' is NOT in pyautogui.KEYBOARD_KEYS ('command'
+        # is) and the eval prompt says "cmd+shift+3" — without the alias
+        # the live hotkey op died with KeyError.
+        agent = da.DesktopAgent()
+        self.assertIsNone(agent._ax_ping)      # fresh-breaker state
+        self.assertFalse(agent._ax_off)
+        with mock.patch.object(da.pyautogui, "hotkey") as hk:
+            agent._execute({"type": "hotkey",
+                            "keys": ["Cmd", "shift", "3"]},
+                           1920, 1080, 1024, 576)
+        hk.assert_called_once_with("command", "shift", "3")
+
+    def test_hotkey_string_form_parses_with_alias(self):
+        agent = da.DesktopAgent()
+        with mock.patch.object(da.pyautogui, "hotkey") as hk:
+            agent._execute({"type": "hotkey", "keys": "cmd+shift+3"},
+                           1920, 1080, 1024, 576)
+        hk.assert_called_once_with("command", "shift", "3")
+
+    def test_single_key_lowercase_and_alias(self):
+        agent = da.DesktopAgent()
+        with mock.patch.object(da.pyautogui, "press") as pk:
+            agent._execute({"type": "key", "key": "Enter"},
+                           1920, 1080, 1024, 576)
+            agent._execute({"type": "key", "key": "control"},
+                           1920, 1080, 1024, 576)
+        self.assertEqual([c.args for c in pk.call_args_list],
+                         [("enter",), ("ctrl",)])
+
+    def test_ax_ping_failure_skips_tree(self):
+        # denied Automation: the 2s-capped ping fails → the (up-to-12s
+        # blocking) tree walk is NEVER attempted; AX off for the run
+        agent = da.DesktopAgent()
+        with mock.patch.object(da.subprocess, "run",
+                               side_effect=OSError("no osascript")):
+            text, _ = agent._ax_bundle()
+        self.assertEqual(text, "")
+        self.assertTrue(agent._ax_off)
+        self.driver.ax_tree.assert_not_called()
+
+    def test_ax_empty_tree_latches_off_no_repeated_stalls(self):
+        agent = da.DesktopAgent()
+        self.driver.ax_tree.return_value = []     # e.g. desktop frontmost
+        text, _ = agent._ax_bundle()
+        self.assertEqual(text, "")
+        self.assertTrue(agent._ax_off)
+        self.driver.ax_tree.reset_mock()
+        text2, _ = agent._ax_bundle()
+        self.assertEqual(text2, "")
+        self.driver.ax_tree.assert_not_called()   # breaker held
 
 
 if __name__ == "__main__":

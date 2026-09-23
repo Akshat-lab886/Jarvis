@@ -170,9 +170,20 @@ def _desktop_shots():
     return found
 
 
-def _verify_new_shot():
+def _verify_new_shot(timeout_s=4.0):
+    """Poll for the new Desktop screenshot file.
+
+    macOS's floating thumbnail can land a beat after the keystroke, so
+    an immediate one-shot check flaked into false FAILs — poll up to
+    *timeout_s* before giving up.
+    """
     before = _ST.get("shots_before") or set()
-    new = _desktop_shots() - before
+    deadline = time.time() + timeout_s
+    while True:
+        new = _desktop_shots() - before
+        if new or time.time() >= deadline:
+            break
+        time.sleep(0.25)
     _ST["shots_new"] = new
     if new:
         return True, f"new screenshots: {len(new)}"
@@ -376,7 +387,7 @@ def _print_probe(p):
           f"move={f.get('click_move_duration_s')}s")
     print(f"    -> per click step {f.get('per_click_step_s')}s, "
           f"per key step {f.get('per_key_step_s')}s, "
-          f"8-step task floor {f.get('per8step_task_task_s', f.get('per8step_task_s'))}s")
+          f"8-step task floor {f.get('per8step_task_s')}s")
     m = p.get("model", {})
     if "error" in m:
         print(f"  model: ERROR {m['error'][:120]}")
@@ -397,6 +408,7 @@ def _print_probe(p):
 def run_live(task_names, max_steps_override, label, out):
     """Run tasks on the real desktop. Returns (exit_code, section)."""
     section = {"label": label, "ts": _iso(), "tasks": [], "blocked": None}
+    out["live"] = section      # early, so blocked runs still land in it
 
     ok, detail = _screenshot_capability()
     if not ok:
