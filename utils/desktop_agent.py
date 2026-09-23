@@ -1,50 +1,57 @@
 """
-Jarvis Desktop Agent (v20)
+Jarvis Desktop Agent (v21)
 
 Gives Jarvis eyes and hands on the user's desktop:
 
-- Captures the screen with pyautogui and downscales it for the vision model.
-- Asks the vision model (Gemini, with Groq vision fallback) for the
-  next single action as JSON: click / type / key / done.
-- Scales model coordinates back to the real screen resolution and executes
-  with pyautogui.
-- Loops until the task is done or a step limit is reached.
+- Captures the screen and downscales it for the vision model.
+- Asks the vision model for a short PLAN of next actions (JSON).
+- Executes them with per-action settle + per-action Jev safety gate,
+  re-planning from a fresh frame after each chunk.
+- Falls back to coordinate clicks when AX grounding is unavailable.
 
 v19 (Phase 0 · instrumentation)
 --------------------------------
-Per-phase timing for every step — capture / model / Jev gate / execute /
-settle — is recorded in ``self.last_run`` and appended to the result as a
-``[timing]`` line; ``utils/desktop_eval.py`` reads it for baselines.
+Per-phase timing in ``self.last_run`` + ``[timing]`` line on results;
+magic sleeps hoisted to module constants; ``utils/desktop_eval.py``
+measures baselines.
 
 v20 (Phase 1 · speed)
 ----------------------
-Tuned against the Phase 0 baseline probe, which showed the frame pipeline
-is cheap (13 ms) while the FIXED SLEEPS are the bottleneck (~1.6 s of dead
-time per click step, ~13 s floor on an 8-step task):
+Adaptive frame-diff settle (floor ~0.12 s, cap 0.6 s) replaced the fixed
+sleep(1.0); PAUSE=0; direct ``click(x, y)``; BILINEAR + JPEG q62;
+bounded rolling context (last 3 actions); ``JEV_STEP_TIMEOUT_S=2.0``
+kept deliberately (measured gate latency ~1.5 s — a tighter cap would
+fail-open every call and disable the gate).  Baseline dead time per
+8-step task: ~12.8 s → ~1.1 s.
 
-* ``POST_ACTION_SLEEP_S (1.0)`` + ``CLICK_MOVE_DURATION_S (0.2)`` and the
-  global ``pyautogui.PAUSE (0.2)`` are gone.  PAUSE=0; clicks are one
-  ``pyautogui.click(x, y)`` call with no cursor animation.
-* **Adaptive settle** replaces the fixed sleep: frame-diff polling
-  (160px grayscale thumbs, ≥2 consecutive quiet frames, capped at
-  ``SETTLE_MAX_MS``) returns as soon as the screen holds still — and a
-  frame is only reused for the next step's model call when the action
-  VISIBLY took effect (otherwise the loop forces a fresh capture, so a
-  slow/deferred render can never poison the next decision).
-* Capture: BILINEAR downscale (was LANCZOS) + JPEG q62 (was q70) — the
-  probe showed even LANCZOS is13 ms, so this is a small win, taken
-  because it is free.
-* **Bounded rolling context**: the model now sees its last3 actions
-  (70 chars each — constant bound) instead of nothing, so it stops
-  repeating itself; prompt size cannot grow with task length (counters
-  the measured "later steps are3x slower" CUA pattern).
-* Jev step-gate timeout is explicit: ``JEV_STEP_TIMEOUT_S`` defaults to
-  2.0 s — NOT tighter.  The Phase 0 probe measured the real gate at
-  1563 ms; a1.2 s cap would fail-open every call and silently disable
-  the gate.  Fail-open semantics unchanged.
+v21 (Phase 2 + Phase 3)
+------------------------
+Phase 2 — chunked planning:
+  One model call returns ``{"plan": [2-4 actions], "done": null}``; the
+  loop executes up to ``PLAN_CHUNK`` of them (settle + Jev gate AFTER
+  EVERY action — chunking never skips a gate), then re-plans from a
+  fresh/reused frame.  Model calls per task ≈ ceil(actions / chunk) + 1
+  instead of one per action (the measured CUA bottleneck is model calls,
+  not code — OSWorld-Human).  Legacy single-action replies
+  ``{"type": ...}`` still parse, so a model that ignores the plan format
+  degrades to exactly the v20 behaviour.  A call-budget guard
+  (2×max_steps+4) stops a no-progress loop even if every step is
+  gate-skipped.
 
-Safety: pyautogui fail-safe is ON (moving the mouse to a screen corner
-aborts execution).  Jev per-step gate and HITL approvals untouched.
+Phase 3 — AX grounding + widened action space:
+  ``computer_use.ax_tree()`` snapshots the frontmost app's accessibility
+  tree (fail-open → ``[]`` → coords-only prompt = pre-Phase-3 behaviour)
+  and the plan prompt carries bounded element refs: click them with
+  ``{"type":"click_el","ref":N}`` — executed in BACKGROUND via
+  ``get_driver().click_element`` (cursor never moves).  New ops close
+  the gaps the eval suite's ``hotkey_gap`` marker proved:
+  ``hotkey`` chords (⌘⇧3 now expressible), ``drag``, ``scroll``,
+  right/double click (``button``/``dbl`` on click), ``wait``.
+  ``hotkey`` is CONTENT-BEARING (⌘V pastes!) so it is Jev-gated like
+  type/key; pure pointer ops stay ungated, same trust as today's clicks.
+
+Safety unchanged: pyautogui corner failsafe, Jev per-step gate
+fail-open, HITL approvals in the executor, bounded prompt/history.
 """
 
 import io
@@ -63,8 +70,9 @@ from config import Config
 logger = logging.getLogger("Jarvis.DesktopAgent")
 
 # --------------------------------------------------------------------- #
-# Phase 1 · speed constants (see docstring; values chosen from the
-# Phase 0 baseline probe on this machine).
+# Phase 1 · speed constants (chosen from the Phase 0 baseline probe:
+# the frame pipeline measured only13 ms — NOT the bottleneck — while the
+# fixed sleeps measured1.6 s PER CLICK STEP, so the sleeps are what go).
 # --------------------------------------------------------------------- #
 SETTLE_MAX_MS = int(os.getenv("SETTLE_MAX_MS", "600"))        # was sleep(1.0)
 SETTLE_INTERVAL_S = float(os.getenv("SETTLE_INTERVAL_S", "0.06"))
@@ -79,29 +87,45 @@ FRAME_RESAMPLE = Image.BILINEAR   # was LANCZOS
 HISTORY_STEPS = 3                 # bounded rolling context (was: none)
 HISTORY_CHARS = 70
 JEV_STEP_TIMEOUT_S = float(os.getenv("JEV_STEP_TIMEOUT_S", "2.0"))
-#   ^ Phase 0 measured the Jev gate at 1563 ms: a tighter cap (the
-#     originally-planned 1.2 s) would fail-open EVERY call and silently
-#     disable the gate.  Keep 2.0 s — speed never outranks safety.
+#   ^ Phase 0 measured the Jev gate at1563 ms: a tighter cap (the
+#     originally-planned1.2 s) would fail-open EVERY call and silently
+#     disable the gate.  Keep2.0 s — speed never outranks safety.
+
+# Phase 2 · chunked planning: actions executed per model call.
+# 1 = legacy pacing (one action per call).
+PLAN_CHUNK = max(1, int(os.getenv("DESKTOP_PLAN_CHUNK", "3")))
+
+# Phase 3 · AX grounding (fail-open to coords-only when unavailable).
+AX_ENABLED = os.getenv("DESKTOP_AX", "1") != "0"
+AX_MAX_ELEMS = int(os.getenv("DESKTOP_AX_MAX", "40"))
+AX_LIST_MAX_CHARS = 900           # prompt budget for the element list
 
 SYSTEM_PROMPT = """You are a desktop automation agent controlling the user's computer.
-You receive a screenshot of the screen. Decide the NEXT SINGLE action that makes progress on the task.
-Output STRICT JSON only, no markdown, no extra text. One of these forms:
-{"type": "click", "x": <0-1024>, "y": <0-768>, "reason": "brief reason"}
-{"type": "type", "text": "text to type"}
-{"type": "key", "key": "enter"}            (any pyautogui key name: enter, tab, esc, backspace...)
-{"type": "done", "summary": "Task complete: ..."}
-Coordinates are relative to the 1024-wide screenshot you are shown.
-Click only on elements you can actually see. When the task is finished, output the done action."""
+You receive a screenshot. Decide the NEXT FEW single actions (2-4; exactly 1 if unsure) that make progress on the task.
+Output STRICT JSON only, no markdown. Either a plan:
+{"plan":[{"type":"click","x":<0-1024>,"y":<0-768>,"reason":"..."},...],"done":null}
+or, when the task is finished: {"plan":[],"done":"Task complete: ..."}
+One action per plan item, in execution order. Forms:
+{"type":"click","x":N,"y":N}          optional: "button":"right", "dbl":true
+{"type":"click_el","ref":N}           N from the UI ELEMENTS list (runs in background; cursor does not move)
+{"type":"type","text":"..."}
+{"type":"key","key":"enter"}          enter tab esc backspace ...
+{"type":"hotkey","keys":["command","shift","3"]}   key CHORD
+{"type":"scroll","amount":N}          N>0 up, N<0 down
+{"type":"drag","x":N,"y":N,"to_x":N,"to_y":N}
+{"type":"wait"}                       pause; screen still catching up
+Coordinates are relative to the 1024-wide screenshot shown; click only elements you can actually see; prefer click_el refs when a UI ELEMENTS list is given."""
 
 
 class DesktopAgent:
     def __init__(self, max_width=FRAME_MAX_WIDTH):
-        pyautogui.FAILSAFE = True
+        pyautogui.FAILAFE = True
         pyautogui.PAUSE = PYAUTOGUI_PAUSE
         self.max_width = max_width
         self.screen_w, self.screen_h = pyautogui.size()
         self.last_run = None          # Phase 0: per-run timing record
         self._last_img = None         # Phase 1: frame the model last saw
+        self._ax_map = {}             # Phase 3: ref -> element dict
 
     # ------------------------------------------------------------------ #
     # Screen capture
@@ -200,6 +224,55 @@ class DesktopAgent:
         return img, (time.time() - t0) * 1000, saw_change
 
     # ------------------------------------------------------------------ #
+    # Phase 3 · AX grounding (fail-open → coords-only prompt)
+    # ------------------------------------------------------------------ #
+    def _ax_bundle(self):
+        """(element-lines, ms) for the plan prompt — '' on any failure.
+
+        Fail-open: AX unavailable/disabled → coords-only prompt, i.e.
+        exactly the pre-Phase-3 behaviour.  The ref map is RESET first so
+        a stale ref can never click the wrong element.
+        """
+        self._ax_map = {}
+        t0 = time.time()
+        if not AX_ENABLED:
+            return "", 0.0
+        try:
+            from utils.computer_use import get_driver
+            els = get_driver().ax_tree(max_elements=AX_MAX_ELEMS)
+        except Exception:
+            els = []
+        ms = (time.time() - t0) * 1000
+        if not els:
+            return "", ms
+        lines, chars = [], 0
+        for e in els:
+            try:
+                ref = int(e.get("ref") or (len(lines) + 1))
+                role = str(e.get("role", ""))[:18]
+                name = " ".join(str(e.get("name", "")).split())[:44]
+                line = (f"[{ref}] {role} {name!r} @ "
+                        f"({e['x']},{e['y']},{e['w']},{e['h']})")
+            except Exception:
+                continue
+            if chars + len(line) > AX_LIST_MAX_CHARS:
+                break
+            self._ax_map[ref] = e
+            chars += len(line)
+            lines.append(line)
+        return ("\n" + "\n".join(lines)) if lines else "", ms
+
+    def _prompt(self, task, n, max_steps, hist, ax_list):
+        parts = [f"TASK: {task}",
+                 f"This is screenshot {n} of up to {max_steps}.",
+                 f"Recent actions: {hist}."]
+        if ax_list:
+            parts.append("UI ELEMENTS (accessibility; prefer click_el "
+                         "refs):\n" + ax_list)
+        parts.append("Decide the next plan.")
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------ #
     # Vision model calls
     # ------------------------------------------------------------------ #
     def _ask_gemini(self, prompt, image):
@@ -240,33 +313,116 @@ class DesktopAgent:
         return self._ask_groq(prompt, image_b64)
 
     # ------------------------------------------------------------------ #
-    # Action parsing & execution
+    # Action parsing (plan + legacy) & execution
     # ------------------------------------------------------------------ #
-    def _parse_action(self, text):
-        text = (text or "").strip()
+    @staticmethod
+    def _parse_plan(raw):
+        """Parse a model reply into ``(actions, done)``.
+
+        Accepts BOTH formats:
+          * Phase 2 plan:  {"plan":[...],"done":null|"Task complete: ..."}
+          * legacy single: {"type":"click", ...}   (→ one-action plan)
+        Returns ``(None, None)`` on anything unparseable, ``( [], done)``
+        when the task is finished, else ``(actions, None)``.
+        """
+        text = (raw or "").strip()
         text = re.sub(r"^```(?:json)?", "", text).rstrip("`").strip()
+        obj = None
         try:
-            return json.loads(text)
+            obj = json.loads(text)
         except Exception:
             m = re.search(r"(\{.*\})", text, re.DOTALL)
             if m:
                 try:
-                    return json.loads(m.group(1))
+                    obj = json.loads(m.group(1))
                 except Exception:
-                    return None
-        return None
+                    return None, None
+        if not isinstance(obj, dict):
+            return None, None
+        if "plan" in obj:
+            acts = obj.get("plan")
+            if not isinstance(acts, list):
+                return None, None
+            acts = [a for a in acts
+                    if isinstance(a, dict) and a.get("type")]
+            if acts:
+                return acts, None
+            d = obj.get("done")
+            if d not in (None, False, "", "null"):
+                return [], str(d)
+            return None, None
+        if obj.get("type"):
+            return [obj], None          # legacy single-action reply
+        return None, None
 
     def _execute(self, action, real_w, real_h, disp_w, disp_h):
+        def _pt(x, y):
+            x = min(real_w - 1, max(0, int(x)))
+            y = min(real_h - 1, max(0, int(y)))
+            return x, y
+
         atype = action.get("type")
         if atype == "click":
-            x = round(int(action.get("x", 0)) * real_w / disp_w)
-            y = round(int(action.get("y", 0)) * real_h / disp_h)
-            x = min(real_w - 1, max(0, x))
-            y = min(real_h - 1, max(0, y))
-            # Phase 1: one call, no cursor animation (PAUSE=0) — was
-            # moveTo(duration=0.2) + click(), ~0.4 s of pure overhead.
-            pyautogui.click(x, y)
-            return f"Clicked ({x}, {y})"
+            x, y = _pt(action.get("x", 0), action.get("y", 0))
+            button = str(action.get("button", "left")).lower()
+            dbl = bool(action.get("dbl"))
+            # PAUSE=0 (Phase 1): one call, no cursor animation.
+            if dbl and button == "right":
+                pyautogui.doubleClick(x, y, button="right")
+            elif dbl:
+                pyautogui.doubleClick(x, y)
+            elif button == "right":
+                pyautogui.rightClick(x, y)
+            else:
+                pyautogui.click(x, y)
+            tag = " [dbl]" if dbl else (" [right]" if button == "right" else "")
+            return f"Clicked ({x}, {y}){tag}"
+        if atype == "click_el":
+            # Phase 3: background element click — cursor never moves.
+            try:
+                ref = int(action.get("ref", 0) or 0)
+            except (TypeError, ValueError):
+                return f"Bad element ref: {action.get('ref')!r}"
+            el = (self._ax_map or {}).get(ref)
+            if not el:
+                return f"Unknown element ref {ref} (stale AX list?)"
+            from utils.computer_use import get_driver
+            return get_driver().click_element(el.get("app", ""),
+                                              el.get("name", ""),
+                                              el.get("role"))
+        if atype == "hotkey":
+            # Chords (⌘⇧3 etc) — the gap the eval hotkey marker proved.
+            # CONTENT-BEARING (⌘V pastes!) → Jev-gated before we get here.
+            keys = action.get("keys") or action.get("key")
+            if isinstance(keys, str):
+                keys = [k.strip() for k in re.split(r"[+\-,\s]+", keys)
+                        if k.strip()]
+            keys = [str(k).lower() for k in (keys or [])][:6]
+            if len(keys) < 2:
+                return f"Hotkey needs ≥2 keys, got {keys!r}"
+            pyautogui.hotkey(*keys)
+            return f"Pressed: {'+'.join(keys)}"
+        if atype == "scroll":
+            try:
+                amt = int(action.get("amount", 0) or 0)
+            except (TypeError, ValueError):
+                return f"Scroll bad amount: {action.get('amount')!r}"
+            if not amt:
+                return "Scroll: no amount"
+            pyautogui.scroll(max(-20, min(20, amt)))
+            return f"Scrolled {amt:+d}"
+        if atype == "drag":
+            x1, y1 = _pt(action.get("x", 0), action.get("y", 0))
+            x2, y2 = _pt(action.get("to_x", 0), action.get("to_y", 0))
+            pyautogui.moveTo(x1, y1)
+            pyautogui.mouseDown()
+            # small duration so target apps register the trajectory
+            pyautogui.moveTo(x2, y2, duration=0.08)
+            pyautogui.mouseUp()
+            return f"Dragged ({x1},{y1})->({x2},{y2})"
+        if atype == "wait":
+            # the settle after execute does the actual waiting
+            return "Waited."
         if atype == "type":
             text = action.get("text", "")
             if text:
@@ -302,6 +458,7 @@ class DesktopAgent:
             parts = [f"steps={n}", f"wall={wall:.1f}s"]
             for label, key in (("capture", "capture_ms"),
                                ("model", "model_ms"),
+                               ("ax", "ax_ms"),
                                ("gate", "gate_ms"),
                                ("exec", "execute_ms"),
                                ("settle", "settle_ms")):
@@ -316,7 +473,7 @@ class DesktopAgent:
         return f"{msg}\n[timing] {run.get('summary', '?')}"
 
     # ------------------------------------------------------------------ #
-    # Main loop
+    # Main loop (Phase 2: plan-chunked; gate AFTER EVERY action)
     # ------------------------------------------------------------------ #
     def run_task(self, task, max_steps=None):
         run = {"task": str(task)[:200], "steps": [], "model_calls": 0,
@@ -341,127 +498,152 @@ class DesktopAgent:
         except Exception:
             jev_ok = False
 
-        pending = None   # settled frame reused as next capture (Phase 1)
+        chunk = max(1, PLAN_CHUNK)
+        call_budget = max_steps * 2 + 4      # no-progress guard
+        used = 0
+        pending = None                       # settled frame for next plan
 
-        for i in range(max_steps):
-            step = {"i": i + 1}
+        while used < max_steps and run["model_calls"] <= call_budget:
+            # ---- one capture (reuse last settle when it verifiably landed)
             t = time.time()
             try:
                 if pending is not None:
-                    # Reuse the settled post-action frame — it IS the
-                    # current state (saw_change verified the action took
-                    # effect), so skip one full capture.
                     self._last_img = pending
                     b64, real_w, real_h, disp_w, disp_h = self._prepare(
                         pending, self.max_width)
                     pending = None
-                    step["frame_reused"] = True
                 else:
                     b64, real_w, real_h, disp_w, disp_h = \
                         self.capture_screen()
-                    step["frame_reused"] = False
             except Exception as e:
-                step["capture_ms"] = (time.time() - t) * 1000
-                run["steps"].append(step)
+                run["steps"].append(
+                    {"i": used + 1,
+                     "capture_ms": (time.time() - t) * 1000})
                 return self._timings(run, f"Error: {e}")
-            step["capture_ms"] = (time.time() - t) * 1000
+            capture_ms = (time.time() - t) * 1000
 
-            # Bounded rolling context (Phase 1): last HISTORY_STEPS
-            # actions, each capped — constant prompt size, so late steps
-            # don't get slower and the model stops repeating itself.
+            # ---- AX bundle (Phase 3; fail-open → coords-only) --------
+            ax_list, ax_ms = self._ax_bundle()
+
+            # ---- bounded rolling context -----------------------------
             recent = [x[:HISTORY_CHARS] for x in log[-HISTORY_STEPS:]]
             hist = "; ".join(recent) if recent else "none"
-            prompt = (f"TASK: {task}\n"
-                      f"This is screenshot {i + 1} of up to {max_steps}. "
-                      f"Recent actions: {hist}. "
-                      f"Decide the next single action.")
+            prompt = self._prompt(str(task), used + 1, max_steps,
+                                  hist, ax_list)
+
             t = time.time()
             try:
                 raw = self._ask(prompt, b64)
             except Exception as e:
-                step["model_ms"] = (time.time() - t) * 1000
-                run["steps"].append(step)
+                run["steps"].append(
+                    {"i": used + 1, "capture_ms": capture_ms,
+                     "model_ms": (time.time() - t) * 1000})
                 return self._timings(
                     run, f"Error talking to vision model: {e}\n"
                          f"Progress so far: {log}")
-            step["model_ms"] = (time.time() - t) * 1000
+            model_ms = (time.time() - t) * 1000
             run["model_calls"] += 1
 
-            action = self._parse_action(raw)
-            if not action:
-                run["steps"].append(step)
+            actions, done = self._parse_plan(raw)
+            if actions is None:
+                run["steps"].append(
+                    {"i": used + 1, "capture_ms": capture_ms,
+                     "model_ms": model_ms, "ax_ms": ax_ms})
                 return self._timings(
                     run, f"I couldn't understand the vision model's response "
                          f"({raw[:200]}). Stopping.\nProgress: {log}")
 
-            step["action"] = action.get("type")
-
-            if action.get("type") == "done":
-                run["steps"].append(step)
+            if not actions and done:
+                run["steps"].append(
+                    {"i": used + 1, "capture_ms": capture_ms,
+                     "model_ms": model_ms, "ax_ms": ax_ms,
+                     "action": "done"})
                 return self._timings(
-                    run, f"Task complete: {action.get('summary', 'done')}\n"
-                         f"Actions: {log}")
+                    run, f"Task complete: {done}\nActions: {log}")
 
-            # Per-step Jev gate: abort on a high-confidence hazard
-            # (credential / delete / spend / outbound send), skip
-            # high-confidence off-task drift. Fail-open on any error.
-            #
-            # Only CONTENT-BEARING steps are screened. A bare coordinate
-            # click ({type,x,y}) gives the (text-only) model nothing to
-            # judge — it can't see the screen — so gating it would skip
-            # valid clicks on an uncertain score. Clicks carry no
-            # injectable text anyway; type/key steps are where the
-            # off-task / credential / outbound risk actually lives.
-            _is_text_step = (action.get("type") in ("type", "key")
-                             or bool(action.get("text"))
-                             or bool(action.get("key")))
-            if jev_ok and _is_text_step:
+            # ---- execute up to chunk actions -------------------------
+            first = True
+            for a in actions[:chunk]:
+                if used >= max_steps:
+                    break
+                step = {"i": used + 1, "action": a.get("type")}
+                if first:
+                    step["capture_ms"] = capture_ms
+                    step["model_ms"] = model_ms
+                    step["ax_ms"] = ax_ms
+                    first = False
+
+                if a.get("type") == "done":
+                    run["steps"].append(step)
+                    return self._timings(
+                        run, f"Task complete: {a.get('summary', 'done')}\n"
+                             f"Actions: {log}")
+
+                # Per-step Jev gate — AFTER EVERY action, chunked or not:
+                # abort on high-confidence hazard (credential / delete /
+                # spend / outbound send), skip confident off-task drift.
+                # Content-bearing steps only: type/key/hotkey (⌘V pastes!)
+                # and anything with text — bare pointer ops carry no
+                # injectable text (same trust as pre-Phase-2 clicks).
+                _is_text_step = (a.get("type") in ("type", "key", "hotkey")
+                                 or bool(a.get("text"))
+                                 or bool(a.get("key")))
+                if jev_ok and _is_text_step:
+                    t = time.time()
+                    try:
+                        verdict = _jev.screen_step(
+                            task, a, timeout=JEV_STEP_TIMEOUT_S)
+                    except Exception:
+                        verdict = None
+                    step["gate_ms"] = (time.time() - t) * 1000
+                    run["gate_calls"] += 1
+                    if verdict is not None:
+                        if _jev.step_should_abort(verdict):
+                            run["steps"].append(step)
+                            return self._timings(
+                                run, f"Safety gate (Jev) stopped step "
+                                     f"{used + 1}: proposed action flagged "
+                                     f"hazardous "
+                                     f"(p={verdict.get('hazard'):.2f}).\n"
+                                     f"Progress: {log}")
+                        if _jev.step_off_task(verdict):
+                            run["steps"].append(step)
+                            log.append(f"[gate] skipped off-task step "
+                                       f"{used + 1} (p_on_task="
+                                       f"{verdict.get('on_task'):.2f})")
+                            break   # plan is wrong → re-plan NOW
+
                 t = time.time()
                 try:
-                    verdict = _jev.screen_step(task, action,
-                                               timeout=JEV_STEP_TIMEOUT_S)
-                except Exception:
-                    verdict = None
-                step["gate_ms"] = (time.time() - t) * 1000
-                run["gate_calls"] += 1
-                if verdict is not None:
-                    if _jev.step_should_abort(verdict):
-                        run["steps"].append(step)
-                        return self._timings(
-                            run, f"Safety gate (Jev) stopped step {i + 1}: "
-                                 f"proposed action flagged hazardous "
-                                 f"(p={verdict.get('hazard'):.2f}).\n"
-                                 f"Progress: {log}")
-                    if _jev.step_off_task(verdict):
-                        run["steps"].append(step)
-                        log.append(f"[gate] skipped off-task step {i + 1} "
-                                   f"(p_on_task="
-                                   f"{verdict.get('on_task'):.2f})")
-                        continue
-
-            t = time.time()
-            try:
-                result = self._execute(action, real_w, real_h, disp_w, disp_h)
-                log.append(result)
-            except Exception as e:
+                    result = self._execute(a, real_w, real_h,
+                                           disp_w, disp_h)
+                    log.append(result)
+                except Exception as e:
+                    step["execute_ms"] = (time.time() - t) * 1000
+                    run["steps"].append(step)
+                    return self._timings(
+                        run, f"Action failed: {e}\nProgress: {log}")
                 step["execute_ms"] = (time.time() - t) * 1000
+                used += 1
+
+                # Phase 1 · adaptive settle after EVERY executed action
+                settled, settle_ms, saw_change = self._settle(
+                    self._last_img)
+                step["settle_ms"] = settle_ms
+                self._last_img = settled
+                pending = settled if (saw_change
+                                      and settled is not None) else None
                 run["steps"].append(step)
-                return self._timings(run,
-                                     f"Action failed: {e}\nProgress: {log}")
-            step["execute_ms"] = (time.time() - t) * 1000
 
-            # Phase 1 · adaptive settle: frame-diff until the screen holds
-            # still (cap SETTLE_MAX_MS) — replaces fixed sleep(1.0).
-            # Reuse the frame for the next step ONLY if the action visibly
-            # took effect; otherwise force a fresh capture next step so a
-            # deferred render can never feed the model a stale screen.
-            settled, settle_ms, saw_change = self._settle(self._last_img)
-            step["settle_ms"] = settle_ms
-            self._last_img = settled
-            pending = settled if saw_change else None
+                if chunk <= 1:
+                    break       # legacy pacing: one action per model call
+            # chunk exhausted (or gate-skipped) → loop re-plans from a
+            # fresh/reused frame
 
-            run["steps"].append(step)
-
+        if used >= max_steps:
+            return self._timings(
+                run, f"Reached the step limit ({max_steps}) without "
+                     f"finishing. Progress: {log}")
         return self._timings(
-            run, f"Reached the step limit ({max_steps}) without finishing. "
-                 f"Progress: {log}")
+            run, f"Planning made no progress after {run['model_calls']} "
+                 f"model calls (every step skipped?). Progress: {log}")

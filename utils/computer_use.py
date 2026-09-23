@@ -285,6 +285,95 @@ class ComputerUse:
         except Exception as e:
             return f"Launch failed: {e}"
 
+    # ------------------------------------------------------------------ #
+    # AX tree snapshot (Phase 3) — grounding without pixels
+    # ------------------------------------------------------------------ #
+    def ax_tree(self, app_name=None, max_elements=40):
+        """Flattened accessibility tree of the frontmost (or named) app.
+
+        Returns ``[{"ref","role","name","app","x","y","w","h"}, ...]``
+        (ref = 1-based list order) — or ``[]`` on ANY failure (layer
+        disabled, non-macOS, permission dialog, app with no windows,
+        parse error), so callers fall back to coordinate clicks exactly
+        as before.  macOS only; two levels deep (window children +
+        their children), capped at *max_elements*.
+        """
+        if not enabled() or _SYSTEM != 'Darwin':
+            return []
+        target = (f'"{_as_quote(app_name)}"' if app_name
+                  else '(first application process whose frontmost is true)')
+        mx = int(max(1, min(200, max_elements)))
+        script = f'''
+tell application "System Events"
+  set p to {target}
+  set appName to name of p
+  set out to ""
+  set n to 0
+  repeat with w in windows of p
+    if n is greater than or equal to {mx} then exit repeat
+    repeat with e in (every UI element of w)
+      if n is greater than or equal to {mx} then exit repeat
+      set line1 to ""
+      try
+        set r to role of e
+        set nm to ""
+        try
+          set nm to name of e
+        end try
+        if nm is missing value then set nm to ""
+        set pt to position of e
+        set sz to size of e
+        set line1 to ((item 1 of pt) as text) & " " & ((item 2 of pt) as text) & " " & ((item 1 of sz) as text) & " " & ((item 2 of sz) as text) & "|" & appName & "|" & r & "|" & nm
+      end try
+      if line1 is not "" then
+        set out to out & line1 & return
+        set n to n + 1
+      end if
+      try
+        repeat with e2 in (every UI element of e)
+          if n is greater than or equal to {mx} then exit repeat
+          set line2 to ""
+          try
+            set r2 to role of e2
+            set nm2 to ""
+            try
+              set nm2 to name of e2
+            end try
+            if nm2 is missing value then set nm2 to ""
+            set pt2 to position of e2
+            set sz2 to size of e2
+            set line2 to ((item 1 of pt2) as text) & " " & ((item 2 of pt2) as text) & " " & ((item 1 of sz2) as text) & " " & ((item 2 of sz2) as text) & "|" & appName & "|" & r2 & "|" & nm2
+          end try
+          if line2 is not "" then
+            set out to out & line2 & return
+            set n to n + 1
+          end if
+        end repeat
+      end try
+    end repeat
+  end repeat
+  return out
+end tell'''
+        ok, out = _osascript(script, timeout=12)
+        if not ok or not out:
+            return []
+        els = []
+        for line in out.splitlines():
+            if "|" not in line:
+                continue
+            try:
+                # coords first so a "|" inside a name survives rsplit
+                coords, app, role, name = line.rsplit("|", 3)
+                xs = coords.split()
+                if len(xs) != 4:
+                    continue
+                x, y, w, h = (int(float(v)) for v in xs)
+            except Exception:
+                continue
+            els.append({"ref": len(els) + 1, "role": role, "name": name,
+                        "app": app, "x": x, "y": y, "w": w, "h": h})
+        return els
+
     def screenshot(self, out_path=None):
         """Capture the screen without any extra dependency on macOS."""
         if not enabled():

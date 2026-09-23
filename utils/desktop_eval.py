@@ -28,9 +28,10 @@ Two modes
       calc_sum      compute 7+8 in Calculator -> display reads 15
       type_marker   type the run nonce into a new TextEdit doc -> text matches
       erase_doc     delete3 short letters -> document empty
-      hotkey_gap    press cmd+shift+3 -> KNOWN ACTION-SPACE GAP
-                    (the loop has no chord/hotkey op — reported as a gap
-                    marker, not scored; it is the motivation for Phase 3)
+      hotkey_shot   press cmd+shift+3 -> new .png on Desktop
+                    (was the hotkey_gap marker in Phase 2 — the action
+                    space now has chords, so it is scored; the fix is
+                    exactly what the gap marker existed to prove)
 
 Exit codes: 0 ok · 1 live task failure · 2 environment blocked (permissions).
 
@@ -153,6 +154,40 @@ class Task:
     capability_gap: bool = False   # known gap: reported, not scored
 
 
+def _desktop_shots():
+    """Screenshot files currently on the Desktop (both naming schemes)."""
+    found = set()
+    try:
+        names = os.listdir(os.path.expanduser("~/Desktop"))
+    except OSError:
+        return found
+    desk = os.path.expanduser("~/Desktop")
+    for n in names:
+        low = n.lower()
+        if low.endswith((".png", ".jpg", ".jpeg")) and (
+                "screenshot" in low or "screen shot" in low):
+            found.add(os.path.join(desk, n))
+    return found
+
+
+def _verify_new_shot():
+    before = _ST.get("shots_before") or set()
+    new = _desktop_shots() - before
+    _ST["shots_new"] = new
+    if new:
+        return True, f"new screenshots: {len(new)}"
+    return False, "no new screenshot file on Desktop"
+
+
+def _cleanup_new_shots():
+    for p in list(_ST.get("shots_new") or []):
+        try:
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
+
+
 def build_tasks():
     """Fresh task list per run (nonce is run-scoped)."""
     return [
@@ -191,10 +226,11 @@ def build_tasks():
             max_steps=8,
         ),
         Task(
-            name="hotkey_gap",
+            name="hotkey_shot",
             prompt="Press cmd+shift+3 to take a screenshot.",
-            verify=lambda: (None, "not scored — capability gap marker"),
-            capability_gap=True,
+            setup=lambda: _ST.update(shots_before=_desktop_shots()),
+            verify=lambda: _verify_new_shot(),
+            cleanup=lambda: _cleanup_new_shots(),
             max_steps=4,
         ),
     ]
