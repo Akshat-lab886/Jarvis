@@ -159,6 +159,16 @@ class DesktopAgent:
         max_steps = max_steps or Config.DESKTOP_AGENT_MAX_STEPS
         log = []
 
+        # Jev per-step safety gate — fail-open (see utils/jev.py).
+        # The loop gets ONE approval up front, then runs blind; this adds
+        # a sub-second typed check before each step touches the desktop.
+        # No key / any error → runs exactly as it does today.
+        try:
+            from utils import jev as _jev
+            jev_ok = _jev.enabled()
+        except Exception:
+            jev_ok = False
+
         for i in range(max_steps):
             try:
                 b64, real_w, real_h, disp_w, disp_h = self.capture_screen()
@@ -180,6 +190,36 @@ class DesktopAgent:
 
             if action.get("type") == "done":
                 return f"Task complete: {action.get('summary', 'done')}\nActions: {log}"
+
+            # Per-step Jev gate: abort on a high-confidence hazard
+            # (credential / delete / spend / outbound send), skip
+            # high-confidence off-task drift. Fail-open on any error.
+            #
+            # Only CONTENT-BEARING steps are screened. A bare coordinate
+            # click ({type,x,y}) gives the (text-only) model nothing to
+            # judge — it can't see the screen — so gating it would skip
+            # valid clicks on an uncertain score. Clicks carry no
+            # injectable text anyway; type/key steps are where the
+            # off-task / credential / outbound risk actually lives.
+            _is_text_step = (action.get("type") in ("type", "key")
+                             or bool(action.get("text"))
+                             or bool(action.get("key")))
+            if jev_ok and _is_text_step:
+                try:
+                    verdict = _jev.screen_step(task, action)
+                except Exception:
+                    verdict = None
+                if verdict is not None:
+                    if _jev.step_should_abort(verdict):
+                        return (f"Safety gate (Jev) stopped step {i + 1}: "
+                                f"proposed action flagged hazardous "
+                                f"(p={verdict.get('hazard'):.2f}).\n"
+                                f"Progress: {log}")
+                    if _jev.step_off_task(verdict):
+                        log.append(f"[gate] skipped off-task step {i + 1} "
+                                   f"(p_on_task="
+                                   f"{verdict.get('on_task'):.2f})")
+                        continue
 
             try:
                 result = self._execute(action, real_w, real_h, disp_w, disp_h)

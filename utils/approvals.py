@@ -200,6 +200,31 @@ class ApprovalManager:
         if not self.requires(action, command):
             return True, ''
 
+        # --- Jev pre-check (utils/jev.py) -----------------------------
+        # Fast-deny an adversarial payload BEFORE it reaches the queue
+        # (saves the full APPROVAL_TIMEOUT_S hold), and attach a
+        # calibrated risk signal to the approval so the operator decides
+        # in a glance.  Jev NEVER auto-approves — destructive actions
+        # still hold for a human exactly as before.  Fail-open: any
+        # error / missing key / timeout leaves today's behaviour intact.
+        jev_info = None
+        try:
+            from utils import jev as _jev
+            if action in _jev.GATED_ACTIONS and _jev.enabled():
+                jev_info = _jev.precheck(command)
+                if jev_info is not None:
+                    jev_info['label'] = _jev.risk_label(jev_info)
+                if _jev.inject_deny(jev_info):
+                    p = jev_info.get('injection')
+                    logger.warning(f"JEV fast-deny [{action}] "
+                                   f"injection={p:.2f}")
+                    return False, (
+                        f"blocked by Jev safety gate (prompt-injection "
+                        f"signal, confidence {p:.2f})")
+        except Exception as e:
+            logger.debug(f"jev precheck skipped: {e}")
+            jev_info = None
+
         # Destructive cooldown — don't stack rapid-fire destructive requests
         if action in DESTRUCTIVE_ACTIONS:
             now = time.time()
@@ -238,6 +263,7 @@ class ApprovalManager:
                     'summary': summary,
                     'timeout': self.timeout,
                     'destructive': action in DESTRUCTIVE_ACTIONS,
+                    'jev': jev_info,   # calibrated risk, or None (fail-open)
                 })
             except Exception as e:
                 logger.warning(f"approval emit failed: {e}")
