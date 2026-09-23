@@ -591,9 +591,19 @@ fetch('/api/vitals').then(r => r.ok ? r.json() : null).then(v => {
         if (!el) return;
         if (arr.length < 2) { el.setAttribute('points', ''); return; }
         const n = arr.length;
+        // Scale to THIS window's own min→max, not a fixed 0–100% axis: a fixed
+        // axis flattens a steady metric into a dead line that reads as
+        // decoration (§7.8 no fake/empty data viz). The absolute level already
+        // sits in the adjacent numeral, so the spark carries trend only
+        // (standard sparkline semantics); truly constant samples stay centered
+        // — an honest flat, never pinned to an axis end where it'd read as 0.
+        let min = arr[0], max = arr[0];
+        for (let k = 1; k < n; k++) { if (arr[k] < min) min = arr[k]; if (arr[k] > max) max = arr[k]; }
+        const range = max - min;
         const pts = arr.map((v, i) => {
             const x = n === 1 ? 0 : (i * 59) / (n - 1);
-            const y = 17 - (Math.max(0, Math.min(100, v)) / 100) * 16;
+            const t = range < 0.5 ? 0.5 : (v - min) / range;
+            const y = 17 - t * 16;
             return x.toFixed(1) + ',' + y.toFixed(1);
         });
         el.setAttribute('points', pts.join(' '));

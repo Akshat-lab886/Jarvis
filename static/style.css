@@ -125,6 +125,11 @@ body.theme-parchment .mobile-mic-btn { display: none; }
         margin: 0 0 8px; padding: 12px;
         box-shadow: 0 6px 24px rgba(43,30,18,.35), 0 0 10px var(--accent-glow);
     }
+    /* Mirror of the desktop rule above ("cmd row already has Talk"): at mobile
+       .mobile-mic-btn provides Talk, so the cmd-row #mic-btn — identical
+       function, identical title — yields instead of stacking a second
+       identical voice control. One Talk per row, no duplicate. */
+    body.theme-parchment #mic-btn { display: none; }
 }
 
 /* MOTION LAW: only the §9 cinematic devices keep time — stream cursor
@@ -2377,3 +2382,19 @@ body.theme-parchment .feed.busy .pulse { display: none; }
     body.theme-parchment .pl-ev { grid-template-columns: 56px minmax(0, 1fr); }
     body.theme-parchment .pl-ev .k { display: none; }
 }
+
+/* ═══ §7.6 LAW — inspector rail = ONE table-like stack, not floating cards ═══
+   The dark layer ships these panels separated by gap:10–15px (1186 / 1351 /
+   1489 / 1608 / 1725 / 1821) — bordered boxes floating on the rail
+   background, the exact anti-pattern §7.6 bans ("never floating bordered
+   boxes on backgrounds"). Parchment never overrode the gap, so the rail
+   rendered as a card stack. Zero the gap and collapse each stacked panel's
+   top border into the previous one, yielding the shared 1px table rule the
+   spec asks for. */
+body.theme-parchment .ops { gap: 0; }
+body.theme-parchment .ops-stack + .ops-stack { margin-top: -1px; }
+
+/* §7.5 LAW — nothing centered. "Open phone UI ↗" was the one centered string
+   in the mobile-link block (its "no paired phones" sibling is already left);
+   left-align it to match. */
+body.theme-parchment .mob-open { text-align: left; }
