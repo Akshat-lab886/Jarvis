@@ -69,9 +69,15 @@ CATALOG = {
     "custom:oc/mimo-v2.5-free":        dict(context=128000, vision=True),
 
     # --- Vyce (DeepSeek v4.1) ------------------------------------------- #
-    # DeepSeek v4.1: 128K context, vision+coding capable, tool use +
-    # structured outputs. Registered as the primary provider above.
-    "vyce:deepseek-v4.1":              dict(context=128000, vision=True),
+    # DeepSeek v4.1: 128K context, tool use + structured outputs.
+    # NOTE: Vision is *not* supported on the vyce/deepseek-v4.1 chat
+    # endpoint — a controlled image probe returned a refusal ("I can't
+    # analyze images..."), not a real description. So vision=False here;
+    # the router will fail vision requests over to another provider
+    # (Gemini/Groq-vision) instead of letting deepseek hallucinate.
+    "vyce:deepseek-v4.1":              dict(context=128000, vision=False),
+    # (deepseek-v4-flash / -flash-lr also accept images HTTP-wise but
+    # return 200 refusals — treat the whole vyce line as text-only.)
 }
 
 # Name fragments that imply vision support when a model is unknown.
