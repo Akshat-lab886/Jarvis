@@ -82,6 +82,20 @@ class OpenAICompatProvider(BaseProvider):
 
     # ---------------------------------------------------------------- #
 
+    # Mercury-2.5 (Inception Labs) is a diffusion/reasoning model: it
+    # budgets the whole output window into `reasoning_tokens` at default
+    # effort and finishes on "length" before emitting any text, so a small
+    # max_tokens yields content=None.  Pass reasoning_effort=low + a sane
+    # temperature/window and it returns content.  temperature must be in
+    # [0.5, 1.0] or mercury resets it to 1.0 with a warning.
+    _MERCURY_HINTS = ("mercury", "inception")
+
+    def _is_mercury(self):
+        name = (getattr(self, "name", "") or "").lower()
+        mdl = (self.models[0] if self.models else "") or ""
+        return any(h in name for h in self._MERCURY_HINTS) or \
+               any(h in mdl.lower() for h in self._MERCURY_HINTS)
+
     def chat(self, messages, *, model=None, tools=None, max_tokens=None,
              temperature=0.2, timeout=45, stream=False):
         kwargs = dict(
@@ -94,6 +108,22 @@ class OpenAICompatProvider(BaseProvider):
             kwargs['max_tokens'] = max_tokens
         if tools:
             kwargs['tools'] = tools
+
+        # Mercury-specific shaping (see _MERCURY_HINTS above).
+        if self._is_mercury():
+            # temperature is rejected below 0.5 / above 1.0 (mercury resets
+            # it to 1.0 with a warning) — clamp into the valid band.
+            raw = kwargs['temperature']
+            kwargs['temperature'] = max(0.5, min(1.0, raw))
+            # never let a small completion budget starve the answer:
+            # mercury burns the whole budget on reasoning tokens first,
+            # so a tiny max_tokens finishes on "length" with content=None.
+            mt = kwargs.get('max_tokens')
+            if not mt or mt < 512:
+                kwargs['max_tokens'] = 512
+            kwargs['extra_body'] = kwargs.get('extra_body') or {}
+            kwargs['extra_body'].setdefault('reasoning_effort', 'low')
+            kwargs.setdefault('max_completion_tokens', kwargs['max_tokens'])
 
         t0 = time.time()
         try:

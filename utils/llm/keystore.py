@@ -35,6 +35,7 @@ ENV_MAP = {
     "openrouter": "OPENROUTER_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "custom": "CUSTOM_OPENAI_API_KEY",
+    "inception": "INCEPTION_API_KEY",
 }
 
 # Providers that never need a key (local servers).

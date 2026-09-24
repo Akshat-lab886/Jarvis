@@ -35,20 +35,26 @@ def _int_literal(node):
 class Brain:
     def __init__(self):
         print("Brain initialized")
-        if Config.GROQ_API_KEY:
+        # Provider priority: Inception Labs (mercury-2.5) first when the
+        # key/env are present, then Groq as the downstream fallback.
+        if Config.INCEPTION_API_KEY:
+            self.client = OpenAI(
+                base_url=Config.INCEPTION_BASE_URL,
+                api_key=Config.INCEPTION_API_KEY,
+                timeout=Config.INCEPTION_TIMEOUT_S,
+            )
+        elif Config.GROQ_API_KEY:
             self.client = OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=Config.GROQ_API_KEY,
             )
-            self.clients = [self.client]
-            print("Brain initialized with Groq API key.")
         else:
             # Not fatal: the BYOK router fleet below may still serve via
             # another cloud key or a local Ollama/LM Studio server (no key
             # needed).  _llm_ready covers the union of all paths.
-            print("Brain: no Groq key — trying the BYOK router fleet.")
-            self.clients = []
             self.client = None
+        if self.client is not None:
+            self.clients = [self.client]
         
         # Use models from Config
         self.models = Config.MODELS or [
