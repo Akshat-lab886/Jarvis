@@ -56,6 +56,20 @@ class Router:
         from utils.llm.keystore import get_keystore
         self.keystore = get_keystore()
         self.providers = build_providers(self.keystore)
+        # Ensure the on-device SigLIP vision provider is present.
+        # build_providers() registers it, but some sandbox environments can't
+        # import the (new) submodule the first time — so we re-assert it here
+        # at class-construction time, which reliably imports sigclip_vision.
+        # The router's vision-failover chain must always have an offline
+        # "eyes" fallback for the desktop/mobile computer-use loop.
+        if 'siglip' not in self.providers:
+            try:
+                from utils.llm.providers.sigclip_vision import SiglipVisionProvider
+                _sp = SiglipVisionProvider()
+                if _sp.available():
+                    self.providers['siglip'] = _sp
+            except Exception:
+                pass
         self._lock = threading.RLock()
         # (provider, model_or_'*') -> available_again_ts
         self._cooldowns = {}

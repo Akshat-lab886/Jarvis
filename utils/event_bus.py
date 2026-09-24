@@ -113,6 +113,22 @@ class EventBus:
                              meta={'device_id': device_id}, reply=reply)
 
     @staticmethod
+    def from_mobile_photo(caption, device_id=None, image_meta=None,
+                          reply=None):
+        """
+        Paired phone: a vision frame.  The hub runs the image through its
+        local vision provider (SigLIP) and publishes the *caption* as a
+        photo event so the standard think->execute pipeline handles it
+        (HITL-gated, origin-stamped 'mobile:<device>').  ``image_meta``
+        carries non-image metadata (dimensions, source) — never the raw
+        pixels, which are processed server-side and not forwarded back.
+        """
+        return InternalEvent('mobile', 'photo', caption,
+                             meta={'device_id': device_id,
+                                   'image_meta': image_meta or {}},
+                             reply=reply)
+
+    @staticmethod
     def from_webhook(payload, reply=None):
         if isinstance(payload, bytes):
             try:

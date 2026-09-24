@@ -736,6 +736,100 @@ def api_mobile_chat():
         return jsonify({'ok': False, 'error': 'Internal error'}), 500
 
 
+@app.route('/api/mobile/vision', methods=['POST'])
+def api_mobile_vision():
+    """
+    Phone: run a captured frame through the hub's vision pipeline (local
+    SigLIP by default -> cloud vision on failover) and act on the
+    resulting caption through the SAME think->execute pipeline as chat
+    (host-silent, mobile-stamped, HITL-gated — destructive actions hold
+    for a human on the dashboard).
+
+    Body:
+      image:       data: image/jpeg;base64,<b64>  OR  just <b64>
+      prompt:      optional hint ("what's on this screen")
+      wait:        true -> synchronous caption in the reply; else 202
+                   (caption + agent plan stream back over /sync)
+    Reply:
+      {ok, caption, confidence, provider, model, accepted|result}
+    """
+    try:
+        device, err = _mobile_auth()
+        if err:
+            return err
+        from utils.event_bus import get_bus
+        from utils.llm.router import get_router
+        data = request.get_json(silent=True) or {}
+        raw = (data.get('image') or '').strip()
+        prompt = (data.get('prompt') or 'Describe what is visible in this image.').strip()[:500]
+        if not raw:
+            return jsonify({'ok': False, 'error': 'image required'}), 400
+        # accept both full data URIs and bare base64
+        if raw.startswith('data:'):
+            header, raw = raw.split(',', 1)
+            media = header.split(':', 1)[1].split(';', 1)[0]
+        else:
+            media = 'image/jpeg'
+        # crude size guard (cap at ~2MB JPEG to bound the vision encode)
+        if len(raw) > 2_800_000:  # base64 blows up 33% vs raw bytes
+            return jsonify({'ok': False,
+                            'error': 'image too large (max ~2MB)'}), 413
+
+        # Run vision through the router (local siglip first, cloud failover).
+        router = get_router()
+        vision_msg = [
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url",
+                 "image_url": {"url": "data:%s;base64,%s" % (media, raw)}},
+            ]},
+        ]
+        vres = router.chat(vision_msg, require={"vision"},
+                           max_tokens=128, temperature=0.2, timeout=30)
+        caption = (vres.text or "").strip()
+        if not caption:
+            return jsonify({'ok': False,
+                            'error': 'no vision provider could describe '
+                                     'the image',
+                            'provider': vres.provider,
+                            'detail': 'vision provider returned empty'}), 502
+
+        image_meta = {'media': media, 'chars': len(raw)}
+        bus = get_bus()
+        event = bus.from_mobile_photo(
+            caption, device_id=device.get('device_id'),
+            image_meta=image_meta,
+        )
+        # The caption itself is displayed back to the phone immediately.
+        # The agent acts on it asynchronously (step events flow back via
+        # the sync log), so destructive actions still hit the approvals
+        # gate even when wait=true.
+        if data.get('wait'):
+            result = bus.publish(event) or 'Done.'
+            return jsonify({'ok': True, 'caption': caption,
+                            'confidence': _extract_conf(caption),
+                            'provider': vres.provider,
+                            'model': vres.model,
+                            'result': str(result)[:2000]})
+        bus.publish(event, background=True)
+        return jsonify({'ok': True, 'caption': caption,
+                        'confidence': _extract_conf(caption),
+                        'provider': vres.provider,
+                        'model': vres.model,
+                        'accepted': event.id}), 202
+    except Exception as e:
+        from utils.logger import logger
+        logger.exception("api_mobile_vision failed")
+        return jsonify({'ok': False, 'error': 'Internal error'}), 500
+
+
+def _extract_conf(caption):
+    """Pull the '(local siglip conf 0.42)' float out of a vision caption."""
+    import re
+    m = re.search(r'conf\s*([01]?\.\d{2})', caption or "")
+    return float(m.group(1)) if m else None
+
+
 @app.route('/api/mobile/sync', methods=['POST'])
 def api_mobile_sync():
     """
