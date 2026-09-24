@@ -42,6 +42,13 @@ class Config:
     # NOTE: No vision models currently available on Groq; vision falls back to Gemini.
     VISION_MODELS = []
 
+    # Local on-device vision cache (SigLIP ONNX).  Defaults to the workspace
+    # `.hf_cache` populated by the model bootstrap; override with
+    # JARVIS_VISION_CACHE for a custom location.
+    VISION_LOCAL_CACHE = os.getenv(
+        'JARVIS_VISION_CACHE',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.hf_cache'))
+
     # Gemini direct-connection fallback (primary when GOOGLE_API_KEY is set)
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')

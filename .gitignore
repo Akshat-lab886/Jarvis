@@ -51,3 +51,6 @@ transcript.json
 # Guardrails live stores (personal facts — never commit)
 USER.md
 MEMORY.md
+
+# Local model cache (vision/etc.) — binaries, never commit
+.hf_cache/

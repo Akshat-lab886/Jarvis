@@ -155,4 +155,15 @@ def build_providers(keystore=None):
     else:
         logger.info("Provider 'lmstudio' disabled by config — skipped")
 
+    # --- Local vision (SigLIP, on-device) — offline vision fallback ----- #
+    # No API key.  Registers only when the ONNX cache is present, so it
+    # silently disappears on machines without the model (the router then
+    # fails vision requests over to Gemini/Groq/OpenAI vision as before).
+    # Used by the desktop/mobile computer-use loop as the offline "eyes".
+    try:
+        from utils.llm.providers.siglip_vision import SiglipVisionProvider
+        _add(SiglipVisionProvider())
+    except Exception as e:
+        logger.info("Provider 'siglip' skipped: %s", e)
+
     return providers

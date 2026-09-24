@@ -78,6 +78,13 @@ CATALOG = {
     "vyce:deepseek-v4.1":              dict(context=128000, vision=False),
     # (deepseek-v4-flash / -flash-lr also accept images HTTP-wise but
     # return 200 refusals — treat the whole vyce line as text-only.)
+
+    # --- Local SigLIP (on-device ONNX vision) ---------------------------- #
+    # Zero-shot image↔text ranking, not a decoder.  vision=True so the
+    # router fails vision requests here when no cloud vision model is
+    # configured; tools=False (it only returns a caption string).
+    "siglip:siglip-base-patch16-224":  dict(context=2048, vision=True,
+                                          tools=False, json_mode=False),
 }
 
 # Name fragments that imply vision support when a model is unknown.
