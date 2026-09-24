@@ -101,25 +101,24 @@ def build_providers(keystore=None):
             key=openrouter_key,
             models=_env_models("OPENROUTER_MODELS", ["openrouter/auto"])))
 
-    # --- Inception Labs (mercury-2.5) — primary provider ----------------- #
-    # config.py ships a default INCEPTION_API_KEY (BYOK), so the key may
-    # live on the Config default rather than in the keystore/env — fall
-    # back to Config for the key, base_url and model, while still letting
-    # a runtime providers.json overlay take precedence.
-    inception_key = ks.get('inception')
+    # --- Vyce (DeepSeek v4.1) — primary provider ------------------------- #
+    # config.py ships a default VYCE_API_KEY (BYOK), so the key may live
+    # on the Config default rather than in the keystore/env — fall back to
+    # Config for the key, base_url and model, while still letting a
+    # runtime providers.json overlay take precedence.
+    vyce_key = ks.get('vyce')
     try:
         from config import Config
-        inc_base = Config.INCEPTION_BASE_URL.rstrip('/')
-        inc_model = Config.INCEPTION_MODEL
-        if not inception_key:
-            inception_key = Config.INCEPTION_API_KEY
+        v_base = Config.VYCE_BASE_URL.rstrip('/')
+        v_model = Config.VYCE_MODEL
+        if not vyce_key:
+            vyce_key = Config.VYCE_API_KEY
     except Exception:
-        inc_base = 'https://api.inceptionlabs.ai/v1'
-        inc_model = 'mercury-2.5'
-    if inception_key:
+        v_base = 'https://vyceai.com/v1'
+        v_model = 'deepseek-v4.1'
+    if vyce_key:
         _add(OpenAICompatProvider(
-            "inception", inc_base, key=inception_key,
-            models=[inc_model]))
+            "vyce", v_base, key=vyce_key, models=[v_model]))
 
     # --- Custom OpenAI-compatible endpoint ------------------------------- #
     custom_url = os.getenv('CUSTOM_OPENAI_BASE_URL', '').strip()

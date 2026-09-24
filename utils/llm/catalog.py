@@ -68,12 +68,10 @@ CATALOG = {
     # vision is on; context is a conservative published-style maximum.
     "custom:oc/mimo-v2.5-free":        dict(context=128000, vision=True),
 
-    # --- Inception Labs ------------------------------------------------- #
-    # mercury-2.5: diffusion LLM, 128K context, vision+coding capable,
-    # tool use + structured outputs. context from published docs (128K
-    # hard cap; 65536 default completion budget).
-    "inception:mercury-2.5":            dict(context=128000, vision=True),
-    "inception:mercury-2":              dict(context=128000, vision=True),
+    # --- Vyce (DeepSeek v4.1) ------------------------------------------- #
+    # DeepSeek v4.1: 128K context, vision+coding capable, tool use +
+    # structured outputs. Registered as the primary provider above.
+    "vyce:deepseek-v4.1":              dict(context=128000, vision=True),
 }
 
 # Name fragments that imply vision support when a model is unknown.

@@ -35,13 +35,13 @@ def _int_literal(node):
 class Brain:
     def __init__(self):
         print("Brain initialized")
-        # Provider priority: Inception Labs (mercury-2.5) first when the
-        # key/env are present, then Groq as the downstream fallback.
-        if Config.INCEPTION_API_KEY:
+        # Provider priority: Vyce (DeepSeek v4.1) first when the key/env
+        # are present, then Groq as the downstream fallback.
+        if Config.VYCE_API_KEY:
             self.client = OpenAI(
-                base_url=Config.INCEPTION_BASE_URL,
-                api_key=Config.INCEPTION_API_KEY,
-                timeout=Config.INCEPTION_TIMEOUT_S,
+                base_url=Config.VYCE_BASE_URL,
+                api_key=Config.VYCE_API_KEY,
+                timeout=Config.VYCE_TIMEOUT_S,
             )
         elif Config.GROQ_API_KEY:
             self.client = OpenAI(

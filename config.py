@@ -14,14 +14,14 @@ class Config:
     # Groq API key
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
-    # Inception Labs — primary provider (mercury-2.5)
-    # NOTE: base_url is the API ROOT — the openai SDK appends
-    # "/chat/completions" itself, so a full endpoint URL here would
-    # produce a doubled ".../chat/completions/chat/completions" 404.
-    INCEPTION_API_KEY = os.getenv('INCEPTION_API_KEY', 'sk_8f9cbb46756871ef8647ba7f2d7c0d52')
-    INCEPTION_BASE_URL = os.getenv('INCEPTION_BASE_URL', 'https://api.inceptionlabs.ai/v1')
-    INCEPTION_MODEL = os.getenv('INCEPTION_MODEL', 'mercury-2.5')
-    INCEPTION_TIMEOUT_S = float(os.getenv('INCEPTION_TIMEOUT_S', '120'))
+    # Primary provider: Vyce (DeepSeek v4.1), OpenAI-compatible endpoint.
+    # NOTE: base_url is the API ROOT (https://vyceai.com/v1); the openai
+    # SDK appends "/chat/completions" itself, so a full endpoint URL here
+    # would produce a doubled ".../chat/completions/chat/completions" 404.
+    VYCE_API_KEY = os.getenv('VYCE_API_KEY', 'sk-3584dfb613f16ff98b2915ee1b7330a19c4f9367e25ab452')
+    VYCE_BASE_URL = os.getenv('VYCE_BASE_URL', 'https://vyceai.com/v1')
+    VYCE_MODEL = os.getenv('VYCE_MODEL', 'deepseek-v4.1')
+    VYCE_TIMEOUT_S = float(os.getenv('VYCE_TIMEOUT_S', '120'))
 
     # Models tried in order until one responds.
     # Groq models: https://console.groq.com/docs/models
