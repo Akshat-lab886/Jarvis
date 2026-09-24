@@ -14,6 +14,12 @@ class Config:
     # Groq API key
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
+    # Inception Labs — primary provider (mercury-2.5)
+    INCEPTION_API_KEY = os.getenv('INCEPTION_API_KEY', 'sk_8f9cbb46756871ef8647ba7f2d7c0d52')
+    INCEPTION_BASE_URL = os.getenv('INCEPTION_BASE_URL', 'https://api.inceptionlabs.ai/v1/chat/completions')
+    INCEPTION_MODEL = os.getenv('INCEPTION_MODEL', 'mercury-2.5')
+    INCEPTION_TIMEOUT_S = float(os.getenv('INCEPTION_TIMEOUT_S', '120'))
+
     # Models tried in order until one responds.
     # Groq models: https://console.groq.com/docs/models
     # Deprecated (Aug 2026): llama-3.3-70b-versatile, llama-3.1-8b-instant, gemma2-9b-it
