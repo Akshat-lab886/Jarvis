@@ -34,8 +34,12 @@ socketio = SocketIO(app, cors_allowed_origins=_ALLOWED_ORIGINS,
 # reset early by an overlapping event (see _event_pipeline).
 _MUTE_LOCK = threading.RLock()
 
-print("DEBUG: Registered Routes:")
-print(app.url_map)
+# Registered Routes — debug-only, emitted once at import (log level DEBUG
+# so it never clutters normal runs; gated on the env var to avoid the
+# cost of formatting in hot-reload).
+if os.environ.get('JARVIS_DEBUG_ROUTES'):
+    from utils.logger import logger as _dbg_logger
+    _dbg_logger.debug("Registered Routes:\n%s", app.url_map)
 
 # Register SocketIO with Logger for Web Terminal
 from utils.logger import register_socketio
