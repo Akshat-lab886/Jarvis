@@ -2063,9 +2063,12 @@ class JarvisExecutor:
         # --- Audit trail: log every action with outcome + duration ---
         _duration_ms = int((time.time() - _t0) * 1000)
         _outcome = 'ok'
-        if 'cancelled' in (result_msg or '').lower() or 'denied' in (result_msg or '').lower():
+        lowered = (result_msg or '').lower()
+        if 'cancelled' in lowered or 'denied' in lowered \
+                or 'privacy gate error' in lowered:
             _outcome = 'denied'
-        elif 'error' in (result_msg or '').lower() or 'failed' in (result_msg or '').lower():
+        elif 'error' in lowered or 'failed' in lowered \
+                or 'system error' in lowered or 'unknown action' in lowered:
             _outcome = 'error'
         try:
             _audit.log(action, command, outcome=_outcome,
