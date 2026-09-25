@@ -90,9 +90,16 @@ class Mouth:
         self._ensure_worker()
         self._play_queue.put(speak_text)
 
+    def _emit_tt(self, event, data):
+        """Emit a TTS/SocketIO event (never raises — UI-only channel)."""
+        try:
+            from utils.server import send_to_ui
+            send_to_ui(event, data)
+        except Exception:
+            pass
+
     def _generate_and_play(self, text):
         import edge_tts
-
         voice = "en-US-ChristopherNeural"
         output_file = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), 'response.mp3')
@@ -106,7 +113,17 @@ class Mouth:
                     communicate = edge_tts.Communicate(text, voice)
                     async for chunk in communicate.stream():
                         if chunk["type"] == "audio" and "data" in chunk:
-                            chunks.append(chunk["data"])
+                            data = chunk["data"]
+                            chunks.append(data)
+                            # Emit progressive TTS chunks so any SocketIO
+                            # client (desktop web UI, mobile relay) can
+                            # stream-play progressively instead of waiting
+                            # for the whole utterance. Each chunk is a raw
+                            # MP3 frame fragment — clients buffer until the
+                            # next chunk arrives; playback stays gapless
+                            # because edge-tts emits contiguous chunks.
+                            self._emit_tt('tts_chunk',
+                                          {'data': data, 'len': len(data)})
                     return chunks
                 audio_chunks = loop.run_until_complete(_collect_chunks())
             finally:
