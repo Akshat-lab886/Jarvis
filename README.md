@@ -77,6 +77,26 @@ Say **"Jarvis"** in the browser to wake him, or just type commands.
 - **Meeting summaries** — AI-generated summaries with key decisions
 - **"Start meeting mode"** / **"Stop meeting mode"** — voice or dashboard
 
+### Tier A — On-device vision (local + mobile camera)
+- **Local vision:** `utils/llm/providers/sigclip_vision.py` runs
+  `Xenova/siglip-base-patch16-224` (ONNX) on-device — CoreMLExecutionProvider
+  on Apple Silicon GPU, CPU fallback. No `torch`, no cloud, ~0.2 s. Model
+  cache lives at `Config.VISION_LOCAL_CACHE` (`.hf_cache`, override
+  `JARVIS_VISION_CACHE`).
+- **Mobile camera relay:** phone camera → `mobile_lite` →
+  `POST /api/mobile/vision` (Bearer-authed, ≤2 MB guard) →
+  `router.chat(require={'vision'})` → `siglip` caption first, cloud
+  (Gemini/Groq/OpenAI) failover if offline. Caption is stamped as a
+  `from_mobile_photo` event — host-silent, HITL-gated, same as chat.
+- **Desktop computer-use:** `desktop_agent.py` screen feed → same SigLIP
+  vision chain (Gemini/Groq path still available for richer analysis).
+
+```bash
+# bootstrap the vision model (one-time, ~211 MB)
+python -c "from utils.llm.providers.sigclip_vision import SiglipVisionProvider; \
+SiglipVisionProvider().available()"
+```
+
 ### New: Computer Vision Recipes
 - **Fridge Vision** — take a photo of your fridge for recipe suggestions
 - **Ingredient detection** — vision model identifies food items
@@ -322,6 +342,41 @@ in SQLite (200 rows / 2000 chars, batch 100) and sync idempotently.
 - **Offline rule** — `/note …` / `note:` stays on-device; everything else
   goes to hub chat. The phone never guesses at actions.
 
+## Primary provider
+
+Jarvis's default primary provider is **DeepSeek v4.1 via Vyce**
+(`https://vyceai.com/v1`, OpenAI-compatible). It is BYOK: ship a
+`VYCE_API_KEY` in `.env` — **no key is bundled in the repo**. The router
+tries `JARVIS_PROVIDER_ORDER` (default `vyce,sigclip,custom,google,groq,...`)
+and failovers per-provider/model with cooldowns and capability routing
+(vision requests skip text-only providers, tools route to tool-capable ones).
+
+## Building / releasing
+
+**Hub (Mac):** the app is pure Python — no build step. Run
+`./venv/bin/python main.py`. Ship the whole repo as a zip; the buyer
+supplies their own `.env` keys.
+
+**Mobile APK** (`mobile_lite/`): CI (`.github/workflows/lite-apk.yml`)
+runs `flutter pub get && flutter build apk --debug` on every push and
+uploads the APK as an artifact. To rebuild locally:
+
+```bash
+cd mobile_lite
+flutter pub get
+flutter build apk --debug      # or --release with a proper keystore
+```
+
+No App Store, no fees, no accounts — side-load or install the PWA from the
+dashboard's `/mobile` route.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Jarvis is **Bring Your Own Key** by
+design: no keys, tokens, or telemetry are shipped or phoned home. The only
+default model is the on-device SigLIP vision provider (a local ONNX binary),
+downloaded separately via the vision bootstrap snippet above.
+
 ## Troubleshooting
 
 - **"All models failed" / "all providers failed"** in the log — no fleet
@@ -330,6 +385,10 @@ in SQLite (200 rows / 2000 chars, batch 100) and sync idempotently.
   dashboard **LLM** panel (or `GROQ_MODELS` / `*_MODELS` overrides), and
   confirm Ollama/LM Studio is reachable if you rely on local models
   (Groq slug list: https://console.groq.com/docs/models).
+- **Vision returns a weak caption** — the SigLIP confidence is a ranking
+  softmax, not calibrated probability. A low score means "no candidate
+  fit"; the router then failovers to a cloud vision model if one is
+  configured.
 - **No audio** — the assistant degrades to UI-only; check the `jarvis.log`
   `Mouth` warnings.
 - **Screenshot/desktop control blocked on macOS** — grant Screen Recording

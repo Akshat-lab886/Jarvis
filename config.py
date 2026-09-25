@@ -15,10 +15,12 @@ class Config:
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
     # Primary provider: Vyce (DeepSeek v4.1), OpenAI-compatible endpoint.
-    # NOTE: base_url is the API ROOT (https://vyceai.com/v1); the openai
-    # SDK appends "/chat/completions" itself, so a full endpoint URL here
-    # would produce a doubled ".../chat/completions/chat/completions" 404.
-    VYCE_API_KEY = os.getenv('VYCE_API_KEY', 'sk-3584dfb613f16ff98b2915ee1b7330a19c4f9367e25ab452')
+    # NOTE: BYOK only — there is NO shipped default key. Copy .env.example
+    # to .env and add your Vyce key. base_url is the API ROOT
+    # (https://vyceai.com/v1); the OpenAI SDK appends "/chat/completions"
+    # itself, so a full endpoint URL here would produce a doubled
+    # ".../chat/completions/chat/completions" 404.
+    VYCE_API_KEY = os.getenv('VYCE_API_KEY')
     VYCE_BASE_URL = os.getenv('VYCE_BASE_URL', 'https://vyceai.com/v1')
     VYCE_MODEL = os.getenv('VYCE_MODEL', 'deepseek-v4.1')
     VYCE_TIMEOUT_S = float(os.getenv('VYCE_TIMEOUT_S', '120'))
