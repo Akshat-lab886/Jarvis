@@ -26,13 +26,15 @@ class _NetMockMixin:
     to raise ConnectionError (simulate total network failure)."""
 
     def _patch_net(self, fn, *a, **k):
+        """Run fn with all ext_api HTTP (via the pooled _http session) mocked
+        to raise ConnectionError (simulate total network failure)."""
         import requests as _r
-        with patch("utils.ext_api.requests") as mock_req:
+        with patch("utils.ext_api._http") as mock_http:
             m = MagicMock()
             m.get.side_effect = _r.exceptions.ConnectionError("net")
             m.post.side_effect = _r.exceptions.ConnectionError("net")
-            mock_req.get = m.get
-            mock_req.post = m.post
+            mock_http.get = m.get
+            mock_http.post = m.post
             return fn(*a, **k)
 
 
@@ -130,7 +132,7 @@ class TestExtApiParsing(unittest.TestCase):
                  "definitions": [{"definition": "the occurrence of events by chance"}]}
             ]
         }]
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.define("serendipity")
         self.assertIn("serendipity", r)
         self.assertIn("noun", r)
@@ -139,7 +141,7 @@ class TestExtApiParsing(unittest.TestCase):
         from utils import ext_api
         fake = MagicMock()
         fake.json.return_value = {"value": "Chuck Norris counts to infinity. Twice."}
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.joke()
         self.assertEqual(r, "Chuck Norris counts to infinity. Twice.")
 
@@ -154,7 +156,7 @@ class TestExtApiParsing(unittest.TestCase):
             "strIngredient1": "pasta", "strMeasure1": "200g",
             "strIngredient2": "tomato", "strMeasure2": "2",
         }]}
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.recipe("pasta")
         self.assertIn("Spaghetti", r)
         self.assertIn("Italian", r)
@@ -165,7 +167,7 @@ class TestExtApiParsing(unittest.TestCase):
         fake.status_code = 200
         fake.headers = {"content-type": "application/json"}
         fake.json.return_value = {"content": "To be or not to be", "author": "Hamlet"}
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.quote()
         self.assertIn("To be or not to be", r)
         self.assertIn("Hamlet", r)
@@ -181,7 +183,7 @@ class TestExtApiParsing(unittest.TestCase):
                       "temperature_2m_min": ["56.9"],
                       "precipitation_probability_max": ["0"]},
         }
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.weather(51.5, -0.1, days=1)
         self.assertIn("70.1", r)
 
@@ -208,7 +210,7 @@ class TestExtApiSpotPrice(_NetMockMixin, unittest.TestCase):
         import utils.ext_api as ea
         fake = MagicMock()
         fake.json.return_value = {"bitcoin": {"usd": 84003}}
-        with patch.object(ea.requests, "get", return_value=fake):
+        with patch.object(ea._http, "get", return_value=fake):
             r = ea.spot_price("BTC-USD")
         self.assertIn("BTC-USD", r)
         self.assertIn("$84,003", r)
@@ -227,7 +229,7 @@ class TestExtApiSpotPrice(_NetMockMixin, unittest.TestCase):
             fake.json.return_value = [{
                 "symbol": "AAPL", "price": 220.5,
                 "changesPercentage": -0.91, "currency": "USD"}]
-            with patch.object(ea.requests, "get", return_value=fake):
+            with patch.object(ea._http, "get", return_value=fake):
                 r = ea.spot_price("AAPL")
         self.assertIn("AAPL", r)
         self.assertIn("220.5", r)
@@ -238,7 +240,7 @@ class TestExtApiSpotPrice(_NetMockMixin, unittest.TestCase):
         fake = MagicMock()
         fake.json.return_value = {"status": {"error_code": 429,
                                              "error_message": "rl"}}
-        with patch.object(ea.requests, "get", return_value=fake):
+        with patch.object(ea._http, "get", return_value=fake):
             r = ea.spot_price("BTC-USD")
         self.assertIn("rate-limited", r.lower())
 
@@ -250,7 +252,7 @@ class TestIpLocateHardened(_NetMockMixin, unittest.TestCase):
         from utils import ext_api
         fake = MagicMock()
         fake.status_code = 429
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.ip_locate()
         self.assertIn("rate-limited", r.lower())
 
@@ -259,7 +261,7 @@ class TestIpLocateHardened(_NetMockMixin, unittest.TestCase):
         fake = MagicMock()
         fake.status_code = 200
         fake.headers = {"content-type": "text/html"}
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.ip_locate("8.8.8.8")
         self.assertIn("unexpected response", r.lower())
 
@@ -267,7 +269,7 @@ class TestIpLocateHardened(_NetMockMixin, unittest.TestCase):
         from utils import ext_api
         fake = MagicMock()
         fake.status_code = 500
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.ip_locate("1.2.3.4")
         self.assertIn("HTTP 500", r)
 
@@ -279,6 +281,6 @@ class TestQuoteHardened(_NetMockMixin, unittest.TestCase):
         from utils import ext_api
         fake = MagicMock()
         fake.status_code = 429
-        with patch.object(ext_api.requests, "get", return_value=fake):
+        with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.quote()
         self.assertIn("rate-limited", r.lower())

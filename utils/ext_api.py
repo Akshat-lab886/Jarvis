@@ -53,7 +53,7 @@ PDF_KEY = (os.getenv("PDFLAYER_API_KEY") or "").strip()
 def research(query, limit=3):
     """Search academic works (OpenAlex) -> title, authors, year, cited."""
     try:
-        r = requests.get(_OPENALEX, params={"search": query,
+        r = _http.get(_OPENALEX, params={"search": query,
                                             "per-page": limit,
                                             "mailto": "jarvis@example.com"},
                          headers={"User-Agent": _UA}, timeout=_TIMEOUT)
@@ -88,12 +88,12 @@ def habit(metric):
                 "I'll track your metrics then, Sir.")
     # ensure graph exists
     try:
-        requests.post(f"{_PIXELA}/users/{_PIXELA_USER}/graphs",
+        _http.post(f"{_PIXELA}/users/{_PIXELA_USER}/graphs",
                       json={"id": "jarvis", "name": "jarvis metrics",
                             "unit": "count", "type": "int",
                             "color": "sora"},
                       timeout=_TIMEOUT)  # 200 or 409 (exists) is fine
-        r = requests.get(f"{_PIXELA}/v1/users/{_PIXELA_USER}/graphs/jarvis",
+        r = _http.get(f"{_PIXELA}/v1/users/{_PIXELA_USER}/graphs/jarvis",
                          timeout=_TIMEOUT)
         data = r.json()
         if data.get("isSuccess"):
@@ -113,7 +113,7 @@ def eth_watch(address):
         return ("Ethereum watch needs a free ETHERSCAN_API_KEY — set it and "
                 "I'll check balances, Sir.")
     try:
-        r = requests.get(_ETHERSCAN, params={
+        r = _http.get(_ETHERSCAN, params={
             "module": "account", "action": "balance",
             "address": (address or "").strip(), "tag": "latest",
             "apikey": ETHERSCAN_KEY}, timeout=_TIMEOUT)
@@ -145,7 +145,7 @@ def ocr_image(image):
             # /static/<file> -> absolute URL via the server origin
             origin = os.getenv("JARVIS_ORIGIN", "http://127.0.0.1:5099")
             payload["url"] = origin + image
-        r = requests.post(_OCR, data=payload, timeout=_TIMEOUT)
+        r = _http.post(_OCR, data=payload, timeout=_TIMEOUT)
         d = r.json()
         if d.get("OCRExitCode") != 1:
             return f"OCR: {d.get('ErrorMessage', 'could not read image')}"
@@ -165,7 +165,7 @@ def pdf_url(url, fname="output.pdf", page_size="A4"):
     try:
         params = {"access_key": PDF_KEY, "page_size": page_size,
                   "document_url": url}
-        r = requests.get(_PDFLAYER, params=params, timeout=_TIMEOUT * 2)
+        r = _http.get(_PDFLAYER, params=params, timeout=_TIMEOUT * 2)
         if r.status_code == 200 and r.headers.get("content-type",
                                                   "").startswith("application/pdf"):
             path = os.path.join(os.path.expanduser("~"), "Downloads",
@@ -202,13 +202,17 @@ _QUOTABLE = "https://api.quotable.io/random"
 _BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
 _H = {"User-Agent": _BROWSER_UA, "Accept": "application/json"}
+# Shared session for connection pooling across rapid multi-endpoint calls
+# (e.g. morning_briefing = weather + joke + quote + cat_fact in sequence).
+_http = requests.Session()
+_http.headers.update(_H)
 
 
 def weather(lat, lon, days=1):
     """Open-Meteo: current + N-day forecast for a lat/lon (no key).
     Returns temperature, wind, precip summary."""
     try:
-        r = requests.get(_OPENMETEO, params={
+        r = _http.get(_OPENMETEO, params={
             "latitude": lat, "longitude": lon,
             "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
@@ -243,7 +247,7 @@ def define(word):
     if not word:
         return ("Dictionary needs a word — e.g. 'define serendipity'.")
     try:
-        r = requests.get(_DICT.format(word=requests.utils.quote(word.strip())),
+        r = _http.get(_DICT.format(word=requests.utils.quote(word.strip())),
                          headers=_H, timeout=_TIMEOUT)
         if r.status_code == 404:
             return f"No dictionary entry for '{word}'."
@@ -270,7 +274,7 @@ def scripture(ref):
     if not ref:
         return "Scripture needs a reference — e.g. 'John 3:16'."
     try:
-        r = requests.get(_BIBLE.format(ref=requests.utils.quote(ref.strip())),
+        r = _http.get(_BIBLE.format(ref=requests.utils.quote(ref.strip())),
                          headers=_H, timeout=_TIMEOUT)
         d = r.json()
         if d.get("reference") is None:
@@ -288,7 +292,7 @@ def ip_locate(ip=""):
     url = ("https://ipapi.co/{ip}/json/".format(ip=ip) if ip
            else "https://ipapi.co/json/")
     try:
-        r = requests.get(url, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(url, timeout=_TIMEOUT)
         if r.status_code == 429:
             return ("IP lookup rate-limited (free ipapi.co tier is ~1k/day). "
                     "Pass a specific IP or try again in a day, Sir.")
@@ -315,7 +319,7 @@ def earthquakes(limit=10, radius_km=500, lat=None, lon=None):
             params["latitude"] = lat
             params["longitude"] = lon
             params["maxradiuskm"] = radius_km
-        r = requests.get(_USGS_EQ, params=params, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(_USGS_EQ, params=params, timeout=_TIMEOUT)
         d = r.json()
         feats = d.get("features", [])
         if not feats:
@@ -333,7 +337,7 @@ def earthquakes(limit=10, radius_km=500, lat=None, lon=None):
 def joke(category="Any"):
     """Chuck Norris Facts (no key). category ignored (all are Chuck Norris)."""
     try:
-        r = requests.get(_CHUCK, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(_CHUCK, timeout=_TIMEOUT)
         return r.json().get("value", "Chuck has spoken.")
     except Exception as e:
         return f"Joke service unavailable: {e}"
@@ -344,7 +348,7 @@ def recipe(query):
     if not query:
         return "Recipe search needs a query — e.g. 'recipe pasta' or 'recipe chicken'."
     try:
-        r = requests.get(_MEAL, params={"s": query.strip()},
+        r = _http.get(_MEAL, params={"s": query.strip()},
                          headers=_H, timeout=_TIMEOUT)
         d = r.json()
         meals = d.get("meals") or []
@@ -371,7 +375,7 @@ def cocktail(query):
     if not query:
         return "Cocktail search needs a query — e.g. 'cocktail margarita'."
     try:
-        r = requests.get(_COCKTAIL, params={"s": query.strip()},
+        r = _http.get(_COCKTAIL, params={"s": query.strip()},
                          headers=_H, timeout=_TIMEOUT)
         d = r.json()
         drinks = d.get("drinks") or []
@@ -390,7 +394,7 @@ def cocktail(query):
 def cat_fact():
     """Cat Fact Ninja: a random cat fact (no key)."""
     try:
-        r = requests.get(_CATFACT, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(_CATFACT, timeout=_TIMEOUT)
         return r.json().get("fact", "Cats: mysterious.")
     except Exception as e:
         return f"Cat fact unavailable: {e}"
@@ -400,7 +404,7 @@ def dog_pic(_=None):
     """Dog CEO: a random dog image URL (no key). `_` ignored — kept for
     consistent arity with other tools."""
     try:
-        r = requests.get(_DOGCEO, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(_DOGCEO, timeout=_TIMEOUT)
         url = r.json().get("message")
         if url:
             return f"🐕 {url}"
@@ -413,7 +417,7 @@ def quote(tag=""):
     """Quotable: a random inspirational quote (no key). tag filters by tag."""
     try:
         url = _QUOTABLE if not tag else f"{_QUOTABLE}/tags/{tag}/quotes"
-        r = requests.get(url, headers=_H, timeout=_TIMEOUT)
+        r = _http.get(url, timeout=_TIMEOUT)
         if r.status_code == 429:
             return "Quote service rate-limited — try again shortly, Sir."
         ctype = r.headers.get("content-type", "")
@@ -464,7 +468,7 @@ def spot_price(symbols):
                 base = s.replace("-USD", "")
                 cg_id = _CG_IDS.get(base, base.lower())
                 cg_ids.append(cg_id)
-            r = requests.get(_COINGECKO, params={"ids": ",".join(cg_ids),
+            r = _http.get(_COINGECKO, params={"ids": ",".join(cg_ids),
                                                 "vs_currencies": "usd"},
                              headers={"User-Agent": _UA}, timeout=_TIMEOUT)
             d = r.json()
@@ -488,7 +492,7 @@ def spot_price(symbols):
                         "(financialmodelingprep.com)"))
         else:
             try:
-                r = requests.get(f"{_FMP}/{','.join(equities)}",
+                r = _http.get(f"{_FMP}/{','.join(equities)}",
                                  params={"apikey": _FMP_KEY},
                                  headers={"User-Agent": _UA}, timeout=_TIMEOUT)
                 for q in (r.json() or []):
@@ -506,7 +510,7 @@ def open_papers(query, limit=3):
     """CORE / OpenAlex: free open-access research papers by topic (no key).
     Complements the legacy OpenAlex path — returns abstracts + links."""
     try:
-        r = requests.get(_OPENALEX, params={
+        r = _http.get(_OPENALEX, params={
             "search": query, "per-page": limit,
             "filter": "open_access.is_oa:true", "mailto": "jarvis@example.com"},
             headers={"User-Agent": _UA}, timeout=_TIMEOUT)
