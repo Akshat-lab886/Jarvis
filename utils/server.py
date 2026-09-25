@@ -824,10 +824,14 @@ def api_mobile_vision():
 
 
 def _extract_conf(caption):
-    """Pull the '(local siglip conf 0.42)' float out of a vision caption."""
+    """Pull the '(local siglip conf 0.42)' float out of a vision caption.
+    Accepts 1-3 decimal places (0.5, 0.99, 0.333) and clamps to [0,1]."""
     import re
-    m = re.search(r'conf\s*([01]?\.\d{2})', caption or "")
-    return float(m.group(1)) if m else None
+    m = re.search(r'conf\s*([01]?\.\d{1,3})', caption or "")
+    if m:
+        v = float(m.group(1))
+        return max(0.0, min(1.0, v)) if v <= 1.0 else None
+    return None
 
 
 @app.route('/api/mobile/sync', methods=['POST'])
