@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/hub_api.dart';
@@ -102,6 +105,65 @@ class _ChatScreenState extends State<ChatScreen> {
         _status = e.message;
       });
       _add(_Msg(false, 'failed: ${e.message}'));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Capture a single phone-camera frame and run it through the hub
+  /// vision pipeline (local SigLIP → cloud failover), then display the
+  /// caption as a bot message. OPS-DECK styling: mono amber, dense.
+  Future<void> _captureAndDescribe() async {
+    if (_busy || widget.session.hub.isEmpty) {
+      if (widget.session.hub.isEmpty) {
+        _add(_Msg(false, 'Pair the hub first to use vision.'));
+      }
+      return;
+    }
+    final picker = ImagePicker();
+    XFile? img;
+    try {
+      img = await picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 80,
+      );
+    } catch (e) {
+      _add(_Msg(false, 'camera error: $e'));
+      return;
+    }
+    if (img == null) return; // cancelled
+
+    _add(_Msg(false, '…', pending: true));
+    setState(() => _busy = true);
+    try {
+      final bytes = await img.readAsBytes();
+      final b64 = base64Encode(bytes);
+      final uri = 'data:image/jpeg;base64,$b64';
+      final result = await widget.api.vision(
+        base64Uri: uri,
+        prompt: 'Describe what is visible on this phone screen.',
+        wait: true,
+      );
+      // Replace the pending bubble with the caption.
+      if (_msgs.isNotEmpty && _msgs.last.pending) _msgs.removeLast();
+      if (result.caption.isNotEmpty) {
+        final conf = result.confidence;
+        final confStr = conf != null
+            ? ' (conf ${conf.toStringAsFixed(2)})'
+            : '';
+        _add(_Msg(false, '${result.caption}$confStr'));
+        _add(_Msg(false,
+            'via ${result.provider}/${result.model} · tap to retry'));
+      } else {
+        _add(_Msg(false,
+            result.detail.isNotEmpty
+                ? 'vision failed: ${result.detail}'
+                : 'vision failed — no provider could describe it'));
+      }
+    } on HubException catch (e) {
+      if (_msgs.isNotEmpty && _msgs.last.pending) _msgs.removeLast();
+      _add(_Msg(false, 'vision failed: ${e.message}'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -339,6 +401,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       await _saveNote(routeInput(t).text);
                     },
                     tooltip: 'NOTE (offline)',
+                  ),
+                  IconButton.outlined(
+                    icon: const Icon(Icons.camera_alt),
+                    onPressed: _captureAndDescribe,
+                    tooltip: 'CAMERA (vision)',
                   ),
                   IconButton.outlined(
                     icon: const Icon(Icons.sync),

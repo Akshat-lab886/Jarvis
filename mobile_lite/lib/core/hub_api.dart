@@ -126,6 +126,33 @@ class HubApi {
     );
   }
 
+  /// Run a captured phone-camera frame through the hub's vision pipeline
+  /// (local SigLIP first → cloud vision failover), host-silent + HITL-gated.
+  /// `base64Uri` = "data:image/jpeg;base64,..." OR a bare base64 string.
+  /// `prompt` = optional hint, e.g. "what is on this screen".
+  /// Returns (caption, confidence, provider, model, detail).
+  Future<VisionResult> vision({
+    required String base64Uri,
+    String? prompt,
+    bool wait = true,
+  }) async {
+    final raw = base64Uri.trim();
+    if (raw.isEmpty) throw const HubException('No image to describe.');
+    final json = await _post('/api/mobile/vision', {
+      'image': raw,
+      if (prompt != null && prompt.trim().isNotEmpty) 'prompt': prompt.trim(),
+      'wait': wait,
+    });
+    return VisionResult(
+      caption: (json['caption'] ?? '').toString(),
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      provider: (json['provider'] ?? '').toString(),
+      model: (json['model'] ?? '').toString(),
+      accepted: (json['accepted'] ?? json['ok'] ?? false) == true,
+      detail: (json['detail'] ?? '').toString(),
+    );
+  }
+
   /// Fold a one-line context note into hub memory (handoff push).
   Future<void> pushHandoff(String line) async {
     final clean = line.trim();
@@ -153,4 +180,22 @@ class SyncResult {
       required this.skipped,
       required this.cursor,
       required this.events});
+}
+
+/// Result of a phone-camera vision round-trip.
+class VisionResult {
+  final String caption;
+  final double? confidence;
+  final String provider;
+  final String model;
+  final bool accepted;
+  final String detail;
+  const VisionResult({
+    required this.caption,
+    this.confidence,
+    required this.provider,
+    required this.model,
+    required this.accepted,
+    required this.detail,
+  });
 }

@@ -20,6 +20,8 @@ dependencies:
   shared_preferences: ^2.2.0
   # QR scan of the dashboard's jarvis://pair?hub=..&code=.. link.
   mobile_scanner: ^5.2.0
+  # Phone camera → /api/mobile/vision (single-frame JPEG capture).
+  image_picker: ^1.1.2
   # Client-side idempotency keys for sync events.
   uuid: ^4.4.0
 
