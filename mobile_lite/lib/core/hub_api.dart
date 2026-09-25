@@ -67,6 +67,10 @@ class HubApi {
           'Rate-limited — too many failures, try again in a few minutes.',
           429);
     }
+    if (res.statusCode == 413) {
+      throw const HubException(
+          'Image too large (max ~2MB). Move closer or crop, then retry.', 413);
+    }
     if (res.statusCode < 200 || res.statusCode >= 300 || json['ok'] == false) {
       throw HubException(
           (json['error'] ?? 'Hub error HTTP ${res.statusCode}').toString(),
