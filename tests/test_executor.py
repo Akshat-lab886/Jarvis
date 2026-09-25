@@ -131,6 +131,32 @@ class TestExecutorDefensive(unittest.TestCase):
         log = [a for a in auditor.calls if a['action'] == 'mystery_tool'][0]
         self.assertEqual(log['outcome'], 'error')
 
+    def test_spot_price_dispatches_and_speaks(self):
+        """executor.spot_price wires symbols -> ext_api -> ui_callback +
+        mouth.speak, matching the classic dispatch pattern."""
+        ex, _ = _build_executor()
+        seen_ui = []
+        with patch("utils.ext_api.spot_price", return_value="$42,069.00 (BTC)"):
+            res = ex.execute_command(
+                {'action': 'spot_price', 'symbols': 'BTC'},
+                brain=MagicMock(),
+                ui_callback=lambda ev, d: seen_ui.append((ev, d)))
+        self.assertIn("$42,069.00", res)
+        self.assertTrue(any(ev == 'ai_text' and '$42' in d.get('text','')
+                            for ev, d in seen_ui))
+        self.assertTrue(any("$42,069.00" in s for s in ex.mouth.said))
+
+    def test_spot_price_degrades_on_ext_api_error(self):
+        """ext_api failure -> 'Price lookup unavailable: …' (no crash)."""
+        ex, _ = _build_executor()
+        with patch("utils.ext_api.spot_price",
+                   side_effect=ConnectionError("downstream 503")):
+            res = ex.execute_command(
+                {'action': 'spot_price', 'symbols': 'ETH'},
+                brain=MagicMock())
+        self.assertIn("Price lookup unavailable", res)
+        self.assertIn("downstream 503", res)
+
     def test_action_handler_exception_wrapped_as_system_error(self):
         """An unexpected exception in a known action body is caught by the
         outer try/except and returned as 'System error...', never raised.
