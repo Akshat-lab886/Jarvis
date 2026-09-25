@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -47,15 +48,22 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _linked = true;
   bool _busy = false;
   String _status = '';
+  // Ambient status line: poll the hub every few seconds so LINKED/OFFLINE
+  // and the hub feed update live (WhatsApp-style), no manual SYNC needed.
+  Timer? _ticker;
+  static const _pollInterval = Duration(seconds: 7);
+  bool _syncing = false;
 
   @override
   void initState() {
     super.initState();
     _boot();
+    _ticker = Timer.periodic(_pollInterval, (_) => _sync(silent: true));
   }
 
   @override
   void dispose() {
+    _ticker?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -184,6 +192,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sync({bool silent = false}) async {
+    // Guard against overlapping syncs (ambient timer + manual SYNC) — only
+    // the in-flight call proceeds; later ones are coalesced into its result.
+    if (_syncing) return;
+    _syncing = true;
     if (_busy && !silent) return;
     if (!silent) setState(() => _busy = true);
     try {
@@ -224,6 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       if (!silent) _add(_Msg(false, 'sync failed: ${e.message} (notes stay queued)'));
     } finally {
+      _syncing = false;
       if (!silent && mounted) setState(() => _busy = false);
     }
   }
