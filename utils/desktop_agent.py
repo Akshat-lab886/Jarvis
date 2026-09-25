@@ -89,7 +89,7 @@ logger = logging.getLogger("Jarvis.DesktopAgent")
 SETTLE_MAX_MS = int(os.getenv("SETTLE_MAX_MS", "600"))        # was sleep(1.0)
 SETTLE_INTERVAL_S = float(os.getenv("SETTLE_INTERVAL_S", "0.06"))
 SETTLE_DIFF_MAX = float(os.getenv("SETTLE_DIFF_MAX", "0.002"))  # changed-pixel fraction (of thumb)
-SETTLE_MIN_STABLE = 2             # consecutive quiet frames before we trust
+SETTLE_MIN_STABLE = 1             # consecutive quiet frames before we trust
 SETTLE_WIDTH = 160                # frame-diff thumb width (cheap)
 TYPE_INTERVAL_S = 0.02            # unchanged: faster drops keys on some apps
 PYAUTOGUI_PAUSE = 0.0             # was 0.2 — paid on EVERY pyautogui call
@@ -215,8 +215,7 @@ class DesktopAgent:
 
         Returns ``(img, ms, saw_change)``:
           * stops after SETTLE_MIN_STABLE consecutive frames that differ
-            ≤ SETTLE_DIFF_MAX from the previous frame, or at SETTLE_MAX_MS;
-          * ``saw_change`` — at least one post-action frame differed from
+            ≤ SETTLE_DIFF_MAX from the previous frame, or at SETTLE_MAX_MS;          * ``saw_change`` — at least one post-action frame differed from
             the frame the model saw, i.e. the action visibly took effect.
             When False the returned frame may be a pre-render/stale view,
             so the caller must NOT reuse it (fresh capture instead).
