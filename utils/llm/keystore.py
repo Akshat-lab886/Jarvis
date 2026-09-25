@@ -72,7 +72,9 @@ class Keystore:
         if val:
             return val
         env_name = ENV_MAP.get(provider)
-        return os.getenv(env_name, '').strip() or None if env_name else None
+        if not env_name:
+            return None
+        return os.getenv(env_name, '').strip() or None
 
     def set(self, provider, key):
         """Persist a key to the runtime overlay (survives restart)."""
