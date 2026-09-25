@@ -63,6 +63,13 @@ class TestApiIntel(unittest.TestCase):
                              return_value=_FAKES["crypto_price"]))
         patches.append(patch("utils.flight_api.flights_near",
                              return_value=_FAKES["flight_tracker"]))
+        # NOTE: api_intel imports and calls `research` (not `open_papers`),
+        # so we must patch that symbol — otherwise the real function fires a
+        # live HTTP call to OpenAlex, which retries/hangs under the resilient
+        # session adapter added to ext_api. open_papers is patched too since
+        # it shares the same codepath and may be called elsewhere.
+        patches.append(patch("utils.ext_api.research",
+                             return_value=_FAKES["open_papers"]))
         patches.append(patch("utils.ext_api.open_papers",
                              return_value=_FAKES["open_papers"]))
         patches.append(patch("utils.ext_api.joke",

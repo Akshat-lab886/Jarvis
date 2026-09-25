@@ -284,3 +284,28 @@ class TestQuoteHardened(_NetMockMixin, unittest.TestCase):
         with patch.object(ext_api._http, "get", return_value=fake):
             r = ext_api.quote()
         self.assertIn("rate-limited", r.lower())
+
+
+class TestSessionResilience(unittest.TestCase):
+    """The shared _http session must retry transient failures (429/5xx)
+    so composite calls (morning_briefing) don't fail on a single blip."""
+
+    def test_session_has_retry_adapter(self):
+        from utils import ext_api
+        adapter = ext_api._http.get_adapter("https://api.example.com")
+        retries = adapter.max_retries
+        self.assertIn(429, retries.status_forcelist)
+        self.assertIn(503, retries.status_forcelist)
+        self.assertGreaterEqual(retries.total, 1)
+        self.assertGreater(retries.backoff_factor, 0)
+
+    def test_session_mounted_for_both_schemes(self):
+        from utils import ext_api
+        schemes = set(ext_api._http.adapters.keys())
+        self.assertIn("http://", schemes)
+        self.assertIn("https://", schemes)
+
+    def test_session_has_browser_user_agent(self):
+        from utils import ext_api
+        self.assertIn("User-Agent", ext_api._http.headers)
+        self.assertIn("Mozilla", ext_api._http.headers["User-Agent"])

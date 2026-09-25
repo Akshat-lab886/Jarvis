@@ -204,7 +204,22 @@ _BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 _H = {"User-Agent": _BROWSER_UA, "Accept": "application/json"}
 # Shared session for connection pooling across rapid multi-endpoint calls
 # (e.g. morning_briefing = weather + joke + quote + cat_fact in sequence).
+# Retry adapter: free APIs (Open-Meteo, CoinGecko, FMP, Quotable, …) rate-
+# limit aggressively (HTTP 429), so a small backoff retry makes composite
+# calls resilient to transient blips without each function re-implementing
+# its own retry loop.
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.retry import Retry
+    _RETRY = Retry(total=2, backoff_factor=0.4,
+                   status_forcelist=(429, 500, 502, 503, 504),
+                   allowed_methods=frozenset(["GET", "POST"]))
+    _ADAPTER = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=_RETRY)
+except Exception:  # urllib3 layout diverges on old installs — degrade cleanly
+    _ADAPTER = HTTPAdapter(pool_connections=10, pool_maxsize=10)
 _http = requests.Session()
+_http.mount("http://", _ADAPTER)
+_http.mount("https://", _ADAPTER)
 _http.headers.update(_H)
 
 
