@@ -141,10 +141,22 @@ def ask(state, questions, timeout=None):
 
 
 def _noul(ans):
+    """Extract a noul probability (0..1) from a Jev answer.
+
+    Jev's "noul" question type normally returns {"noul": <float>}, but a
+    malformed or variant response may yield a bare float — handle both
+    shapes so a bad model answer can never crash the safety gate (the
+    gate fails open with None).
+    """
     try:
-        v = (ans or {}).get("noul")
+        if ans is None:
+            return None
+        if isinstance(ans, dict):
+            v = ans.get("noul")
+        else:
+            v = ans
         return float(v) if v is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         return None
 
 
