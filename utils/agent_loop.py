@@ -312,6 +312,10 @@ TOOL_SPECS = [
         {"query": {"type": "string"},
          "limit": {"type": "integer", "description": "max results (default 3)"}},
         ["query"]),
+    _fn("spot_price", "Spot price for stock/crypto/combo tickers via "
+        "Yahoo Finance (no key). e.g. 'AAPL' or 'BTC-USD,ETH-USD'.",
+        {"symbols": {"type": "string",
+                     "description": "comma-separated tickers"}}, ["symbols"]),
     _fn("weather", "Live weather + forecast from Open-Meteo (no key). "
         "Give lat/lon.",
         {"lat": {"type": "number"}, "lon": {"type": "number"},

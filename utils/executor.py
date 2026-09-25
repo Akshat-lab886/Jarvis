@@ -586,6 +586,16 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'spot_price':
+                syms = command.get('symbols') or target or original_text or ''
+                try:
+                    from utils.ext_api import spot_price
+                    result_msg = spot_price(syms)
+                except Exception as e:
+                    result_msg = f"Price lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:

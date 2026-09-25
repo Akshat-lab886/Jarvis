@@ -21,25 +21,30 @@ from io import BytesIO
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class TestExtApiDegradation(unittest.TestCase):
-    """All functions degrade gracefully under network failure."""
+class _NetMockMixin:
+    """Shared helper: run an ext_api function with requests fully mocked
+    to raise ConnectionError (simulate total network failure)."""
 
     def _patch_net(self, fn, *a, **k):
-        """Run fn with requests.get/post fully mocked to raise."""
+        import requests as _r
         with patch("utils.ext_api.requests") as mock_req:
-            mock_req.exceptions = __import__("requests").exceptions
             m = MagicMock()
-            m.get.side_effect = __import__("requests").exceptions.ConnectionError("net")
-            m.post.side_effect = __import__("requests").exceptions.ConnectionError("net")
+            m.get.side_effect = _r.exceptions.ConnectionError("net")
+            m.post.side_effect = _r.exceptions.ConnectionError("net")
             mock_req.get = m.get
             mock_req.post = m.post
             return fn(*a, **k)
+
+
+class TestExtApiDegradation(_NetMockMixin, unittest.TestCase):
+    """All functions degrade gracefully under network failure."""
 
     def test_new_functions_exist_and_are_callable(self):
         from utils import ext_api
         for name in ["weather", "define", "scripture", "ip_locate",
                      "earthquakes", "joke", "recipe", "cocktail",
                      "cat_fact", "dog_pic", "quote", "open_papers",
+                     "spot_price",
                      "research", "habit", "eth_watch", "ocr_image", "pdf_url"]:
             self.assertTrue(callable(getattr(ext_api, name)),
                             f"{name} not callable")
@@ -157,6 +162,8 @@ class TestExtApiParsing(unittest.TestCase):
     def test_quote_parses_response(self):
         from utils import ext_api
         fake = MagicMock()
+        fake.status_code = 200
+        fake.headers = {"content-type": "application/json"}
         fake.json.return_value = {"content": "To be or not to be", "author": "Hamlet"}
         with patch.object(ext_api.requests, "get", return_value=fake):
             r = ext_api.quote()
@@ -181,3 +188,97 @@ class TestExtApiParsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestExtApiSpotPrice(_NetMockMixin, unittest.TestCase):
+    """spot_price: crypto via CoinGecko (no key), stocks via FMP (key),
+    symbol validation, rate-limit degradation."""
+
+    def test_spot_price_empty(self):
+        from utils.ext_api import spot_price
+        r = spot_price("")
+        self.assertIn("ticker", r.lower())
+
+    def test_spot_price_validates_symbols(self):
+        from utils.ext_api import spot_price
+        r = spot_price("AAPL;! DROP TABLE--")
+        self.assertNotIn("AAPL:", r)
+
+    def test_spot_price_crypto_parses(self):
+        """BTC-USD routes to CoinGecko and parses price."""
+        import utils.ext_api as ea
+        fake = MagicMock()
+        fake.json.return_value = {"bitcoin": {"usd": 84003}}
+        with patch.object(ea.requests, "get", return_value=fake):
+            r = ea.spot_price("BTC-USD")
+        self.assertIn("BTC-USD", r)
+        self.assertIn("$84,003", r)
+
+    def test_spot_price_stock_needs_key(self):
+        """Without FMP_API_KEY, stock tickers report the key requirement."""
+        import utils.ext_api as ea
+        r = ea.spot_price("AAPL")
+        self.assertIn("FMP_API_KEY", r)
+
+    def test_spot_price_stock_with_key_parses(self):
+        """With FMP_API_KEY env set, stocks resolve from FMP JSON."""
+        import utils.ext_api as ea
+        with patch.object(ea, "_FMP_KEY", "fakekey"):
+            fake = MagicMock()
+            fake.json.return_value = [{
+                "symbol": "AAPL", "price": 220.5,
+                "changesPercentage": -0.91, "currency": "USD"}]
+            with patch.object(ea.requests, "get", return_value=fake):
+                r = ea.spot_price("AAPL")
+        self.assertIn("AAPL", r)
+        self.assertIn("220.5", r)
+
+    def test_spot_price_coingecko_ratelimit(self):
+        """CoinGecko 429 -> graceful rate-limited message."""
+        import utils.ext_api as ea
+        fake = MagicMock()
+        fake.json.return_value = {"status": {"error_code": 429,
+                                             "error_message": "rl"}}
+        with patch.object(ea.requests, "get", return_value=fake):
+            r = ea.spot_price("BTC-USD")
+        self.assertIn("rate-limited", r.lower())
+
+
+class TestIpLocateHardened(_NetMockMixin, unittest.TestCase):
+    """ip_locate handles 429 + non-JSON + status >= 300."""
+
+    def test_ip_locate_429(self):
+        from utils import ext_api
+        fake = MagicMock()
+        fake.status_code = 429
+        with patch.object(ext_api.requests, "get", return_value=fake):
+            r = ext_api.ip_locate()
+        self.assertIn("rate-limited", r.lower())
+
+    def test_ip_locate_non_json(self):
+        from utils import ext_api
+        fake = MagicMock()
+        fake.status_code = 200
+        fake.headers = {"content-type": "text/html"}
+        with patch.object(ext_api.requests, "get", return_value=fake):
+            r = ext_api.ip_locate("8.8.8.8")
+        self.assertIn("unexpected response", r.lower())
+
+    def test_ip_locate_server_error(self):
+        from utils import ext_api
+        fake = MagicMock()
+        fake.status_code = 500
+        with patch.object(ext_api.requests, "get", return_value=fake):
+            r = ext_api.ip_locate("1.2.3.4")
+        self.assertIn("HTTP 500", r)
+
+
+class TestQuoteHardened(_NetMockMixin, unittest.TestCase):
+    """quote handles 429 + non-JSON."""
+
+    def test_quote_429(self):
+        from utils import ext_api
+        fake = MagicMock()
+        fake.status_code = 429
+        with patch.object(ext_api.requests, "get", return_value=fake):
+            r = ext_api.quote()
+        self.assertIn("rate-limited", r.lower())

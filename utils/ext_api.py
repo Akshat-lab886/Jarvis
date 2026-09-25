@@ -21,6 +21,27 @@ _PIXELA = "https://pixe.la/v1"
 _ETHERSCAN = "https://api.etherscan.io/api"
 _OCR = "https://api.ocr.space/parse/image"
 _PDFLAYER = "https://api.pdflayer.com/api/convert"
+_YAHOO = "https://query1.finance.yahoo.com/v7/finance/quote"
+# FMP (Financial Modeling Prep) — free real-time stock quotes behind a
+# free API key (250 calls/day). Set FMP_API_KEY for stock/forex lookups.
+_FMP = "https://financialmodelingprep.com/api/v3/quote"
+_FMP_KEY = (os.getenv("FMP_API_KEY") or "").strip()
+# CoinGecko (no key) — used as the crypto fallback when no FMP key is set.
+# Common symbols -> CoinGecko coin IDs (the simple/price endpoint uses IDs,
+# not ticker symbols, so BTC != "btc").
+_COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
+_CG_IDS = {
+    "BTC": "bitcoin", "ETH": "ethereum", "ADA": "cardano",
+    "SOL": "solana", "DOT": "polkadot", "XRP": "ripple",
+    "AVAX": "avalanche-2", "LINK": "chainlink", "MATIC": "polygon",
+    "LTC": "litecoin", "BCH": "bitcoin-cash", "NEAR": "near",
+    "UNI": "uniswap", "ATOM": "cosmos", "FIL": "filecoin",
+    "ARB": "arbitrum", "OP": "optimism", "APT": "aptos",
+}
+
+# Ticker symbol validation: letters, digits, '-', '_', '.' only.
+import re as _re
+_SYMBOL_OK = _re.compile(r"^[A-Z0-9._-]{1,12}$")
 
 ETHERSCAN_KEY = (os.getenv("ETHERSCAN_API_KEY") or "").strip()
 OCR_KEY = (os.getenv("OCR_API_KEY") or "").strip()
@@ -262,11 +283,20 @@ def scripture(ref):
 
 
 def ip_locate(ip=""):
-    """IPAPI: geolocate an IP or the caller's public IP (free tier ~1k/day)."""
+    """IPAPI: geolocate an IP or the caller's public IP (free tier ~1k/day).
+    Free tier is rate-limited (~1k/day): a 429 yields a clear message."""
     url = ("https://ipapi.co/{ip}/json/".format(ip=ip) if ip
            else "https://ipapi.co/json/")
     try:
         r = requests.get(url, headers=_H, timeout=_TIMEOUT)
+        if r.status_code == 429:
+            return ("IP lookup rate-limited (free ipapi.co tier is ~1k/day). "
+                    "Pass a specific IP or try again in a day, Sir.")
+        if r.status_code != 200:
+            return (f"IP lookup unavailable: HTTP {r.status_code}.")
+        ctype = r.headers.get("content-type", "")
+        if "json" not in ctype:
+            return "IP lookup unavailable: unexpected response from ipapi.co."
         d = r.json()
         if "ip" not in d:
             return "IP location unavailable — try again or pass a specific IP."
@@ -384,6 +414,11 @@ def quote(tag=""):
     try:
         url = _QUOTABLE if not tag else f"{_QUOTABLE}/tags/{tag}/quotes"
         r = requests.get(url, headers=_H, timeout=_TIMEOUT)
+        if r.status_code == 429:
+            return "Quote service rate-limited — try again shortly, Sir."
+        ctype = r.headers.get("content-type", "")
+        if "json" not in ctype:
+            return "Quote service unavailable: unexpected response."
         d = r.json()
         if isinstance(d, dict) and d.get("content"):
             return f'"{d["content"]}" — {d.get("author","unknown")}'
@@ -393,6 +428,78 @@ def quote(tag=""):
         return "No quotes found for that tag."
     except Exception as e:
         return f"Quotes unavailable: {e}"
+
+
+def spot_price(symbols):
+    """Spot price for tickers. Crypto (BTC-USD, ETH-USD, …) resolves via
+    CoinGecko (free, no key). Stocks/forex resolve via FMP, which needs a
+    free FMP_API_KEY (financialmodelingprep.com). Degrades gracefully.
+
+    Accepts a comma-separated string or list. Returns a compact
+    'AAPL: 220.50 USD (+0.3%) | BTC: 67000.0 USD (+1.4%)' summary.
+    Symbols are validated against a safe charset to avoid URL injection."""
+    if not symbols:
+        return ("Price check needs a ticker — e.g. 'spot_price BTC-USD' "
+                "for crypto (no key) or 'spot_price AAPL' for stocks "
+                "(needs free FMP_API_KEY).")
+    if isinstance(symbols, (list, tuple)):
+        syms = [s.strip().upper() for s in symbols if str(s).strip()]
+    else:
+        syms = [s.strip().upper() for s in str(symbols).split(",") if s.strip()]
+    safe = [s for s in syms if _SYMBOL_OK.match(s)]
+    if not safe:
+        return ("No valid ticker symbols found "
+                "(use letters, digits, '-', '_', '.' only).")
+    out = []
+    # Split: crypto -> CoinGecko (no key); equities/forex -> FMP (key).
+    crypto, equities = [], []
+    for s in safe:
+        (crypto if s.endswith("-USD") or s.startswith("BTC") or s.startswith("ETH")
+         else equities).append(s)
+    # ---- crypto via CoinGecko (no key) ----
+    if crypto:
+        try:
+            cg_ids = []
+            for s in crypto:
+                base = s.replace("-USD", "")
+                cg_id = _CG_IDS.get(base, base.lower())
+                cg_ids.append(cg_id)
+            r = requests.get(_COINGECKO, params={"ids": ",".join(cg_ids),
+                                                "vs_currencies": "usd"},
+                             headers={"User-Agent": _UA}, timeout=_TIMEOUT)
+            d = r.json()
+            # CoinGecko rate-limit (free tier) returns {"status":{"error_code":429}}
+            if isinstance(d, dict) and "status" in d and not cg_ids[0] in d:
+                out.append(f"crypto: CoinGecko rate-limited (free tier, ~50/min)")
+            else:
+                for idx, s in enumerate(crypto):
+                    cg_id = cg_ids[idx]
+                    price = d.get(cg_id, {}).get("usd")
+                    if price is None:
+                        out.append(f"{s}: n/a (no CoinGecko match)")
+                    else:
+                        out.append(f"{s}: ${price:,.2f} USD")
+        except Exception as e:
+            out.append(f"crypto: unavailable ({e})")
+    # ---- stocks/forex via FMP (requires FMP_API_KEY) ----
+    if equities:
+        if not _FMP_KEY:
+            out.append(("stock/forex tickers need a free FMP_API_KEY "
+                        "(financialmodelingprep.com)"))
+        else:
+            try:
+                r = requests.get(f"{_FMP}/{','.join(equities)}",
+                                 params={"apikey": _FMP_KEY},
+                                 headers={"User-Agent": _UA}, timeout=_TIMEOUT)
+                for q in (r.json() or []):
+                    sym = q.get("symbol", "?")
+                    px = q.get("price")
+                    ch = q.get("changesPercentage")
+                    sign = f"{ch:+.1f}%" if isinstance(ch, (int, float)) else "n/a"
+                    out.append(f"{sym}: {px} {q.get('currency','')} ({sign})")
+            except Exception as e:
+                out.append(f"stock lookup unavailable ({e})")
+    return " | ".join(out) if out else "No prices available."
 
 
 def open_papers(query, limit=3):
