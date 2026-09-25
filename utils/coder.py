@@ -61,6 +61,14 @@ class Coder:
             "subprocess.call(['rm'",
             "os.remove('/')",
             "os.rmdir('/')",
+            # Dangerous builtins / reflection: string-built eval/exec and
+            # dynamic module import let code escape the syntactic denylist
+            # above (e.g. eval('__imp'+'ort__("os").system("...")')).
+            "eval(",
+            "exec(",
+            "globals()[",
+            "locals()[",
+            "__import__(",
         ]
 
         for term in forbidden_terms:

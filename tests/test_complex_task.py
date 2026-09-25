@@ -901,6 +901,19 @@ class TestCoder(unittest.TestCase):
         res = self.coder.execute_with_retry("os.system('rm -rf /')")
         self.assertFalse(res['success'])
 
+    def test_dangerous_builtins_rejected(self):
+        """eval/exec/__import__ are blocked by the safety denylist so
+        string-built payloads can't escape it."""
+        for payload in [
+            "eval('1+1')",
+            "exec('import os; os.system(\"id\")')",
+            "__import__('os').system('id')",
+            "globals()['__builtins__']",
+        ]:
+            res = self.coder.execute_with_retry(payload)
+            self.assertFalse(res['success'],
+                             f"'{payload}' should have been rejected")
+
     def test_timeout_detected(self):
         res = self.coder.execute_with_retry(
             "while True: pass", timeout=1
