@@ -279,9 +279,9 @@ TOOL_SPECS = [
         {"code": {"type": "string",
                   "description": "barcode (digits) or a product name"}},
         ["code"]),
-    _fn("recipe", "Find meal ideas / a recipe by main ingredient "
-        "(TheMealDB). e.g. 'chicken', 'rice', 'tomato'.",
-        {"ingredient": {"type": "string"}}, ["ingredient"]),
+    _fn("recipe", "Find meal ideas / a recipe by name or main ingredient "
+        "(TheMealDB). e.g. 'chicken', 'rice', 'pasta'.",
+        {"query": {"type": "string"}}, ["query"]),
     _fn("define_word", "Look up a word's definition, pronunciation and "
         "synonyms (Free Dictionary).",
         {"word": {"type": "string"}}, ["word"]),
@@ -307,6 +307,45 @@ TOOL_SPECS = [
     _fn("research_papers", "Search academic papers on a topic (OpenAlex) "
         "-> title, authors, year, citations.",
         {"query": {"type": "string"}}, ["query"]),
+    _fn("open_papers", "Search OPEN-ACCESS research papers (CORE/OpenAlex) "
+        "with abstract + link. Use for free full-text.",
+        {"query": {"type": "string"},
+         "limit": {"type": "integer", "description": "max results (default 3)"}},
+        ["query"]),
+    _fn("weather", "Live weather + forecast from Open-Meteo (no key). "
+        "Give lat/lon.",
+        {"lat": {"type": "number"}, "lon": {"type": "number"},
+         "days": {"type": "integer", "description": "forecast days, default 1"}},
+        ["lat", "lon"]),
+    _fn("define", "Dictionary definition, phonetics, and part of speech "
+        "(Free Dictionary API, no key).",
+        {"word": {"type": "string"}}, ["word"]),
+    _fn("scripture", "Look up a Bible verse by reference (bible-api.com, "
+        "no key, KJV).",
+        {"ref": {"type": "string", "description": "e.g. 'John 3:16'"}},
+        ["ref"]),
+    _fn("ip_locate", "Geolocate a public IP or the caller's IP "
+        "(ipapi.co, free ~1k/day).",
+        {"ip": {"type": "string", "description": "IP to look up, or empty for yours"}},
+        []),
+    _fn("earthquakes", "Recent earthquakes near a location (USGS, no key).",
+        {"limit": {"type": "integer"},
+         "radius_km": {"type": "integer"},
+         "lat": {"type": "number"},
+         "lon": {"type": "number"}},
+        []),
+    _fn("joke", "A random Chuck Norris fact (no key).",
+        {"category": {"type": "string"}}, []),
+    # 'recipe' (Meal DB), 'define_word' (Free Dictionary), 'cocktail',
+    # 'lookup_book' (Open Library) already register above (~282-290).
+    _fn("cocktail", "Search cocktail recipes by name (The Cocktail DB, no key).",
+        {"query": {"type": "string"}}, ["query"]),
+    _fn("cat_fact", "A random cat fact (no key).", {}, []),
+    _fn("dog_pic", "Fetch a random dog picture URL (Dog CEO, no key).", {}, []),
+    _fn("quote", "A random inspirational quote, optionally by tag "
+        "(Quotable, no key).",
+        {"tag": {"type": "string", "description": "optional tag filter"}},
+        []),
     _fn("eth_watch", "Check an Ethereum address's balance (Etherscan).",
         {"address": {"type": "string"}}, ["address"]),
     _fn("ocr_image", "Extract text from an image or PDF scan (OCR.Space). "

@@ -465,6 +465,127 @@ class JarvisExecutor:
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
                 self.mouth.speak(result_msg)
 
+            elif action == 'weather':
+                lat = command.get('lat') or 0
+                lon = command.get('lon') or 0
+                days = command.get('days') or 1
+                try:
+                    from utils.ext_api import weather
+                    result_msg = weather(float(lat), float(lon), int(days))
+                except Exception as e:
+                    result_msg = f"Weather unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'define':
+                word = command.get('word') or target or original_text or ''
+                try:
+                    from utils.ext_api import define
+                    result_msg = define(word)
+                except Exception as e:
+                    result_msg = f"Dictionary unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'scripture':
+                ref = command.get('ref') or target or original_text or ''
+                try:
+                    from utils.ext_api import scripture
+                    result_msg = scripture(ref)
+                except Exception as e:
+                    result_msg = f"Scripture lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'ip_locate':
+                ip = command.get('ip') or target or original_text or ''
+                try:
+                    from utils.ext_api import ip_locate
+                    result_msg = ip_locate(ip)
+                except Exception as e:
+                    result_msg = f"IP lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'earthquakes':
+                try:
+                    from utils.ext_api import earthquakes
+                    result_msg = earthquakes(
+                        limit=int(command.get('limit') or 10),
+                        radius_km=int(command.get('radius_km') or 500),
+                        lat=float(command.get('lat') or 0) or None,
+                        lon=float(command.get('lon') or 0) or None)
+                except Exception as e:
+                    result_msg = f"Earthquake data unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'joke':
+                try:
+                    from utils.ext_api import joke
+                    result_msg = joke(command.get('category') or 'Any')
+                except Exception as e:
+                    result_msg = f"Joke service unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'recipe':
+                q = command.get('query') or target or original_text or ''
+                try:
+                    from utils.ext_api import recipe
+                    result_msg = recipe(q)
+                except Exception as e:
+                    result_msg = f"Recipe lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'cocktail':
+                q = command.get('query') or target or original_text or ''
+                try:
+                    from utils.ext_api import cocktail
+                    result_msg = cocktail(q)
+                except Exception as e:
+                    result_msg = f"Cocktail lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'cat_fact':
+                try:
+                    from utils.ext_api import cat_fact
+                    result_msg = cat_fact()
+                except Exception as e:
+                    result_msg = f"Cat fact unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'dog_pic':
+                try:
+                    from utils.ext_api import dog_pic
+                    result_msg = dog_pic()
+                except Exception as e:
+                    result_msg = f"Dog pictures unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'quote':
+                try:
+                    from utils.ext_api import quote
+                    result_msg = quote(command.get('tag') or '')
+                except Exception as e:
+                    result_msg = f"Quotes unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
+            elif action == 'open_papers':
+                q = command.get('query') or target or original_text or ''
+                try:
+                    from utils.ext_api import open_papers
+                    result_msg = open_papers(q, limit=int(command.get('limit') or 3))
+                except Exception as e:
+                    result_msg = f"Open paper lookup unavailable: {e}"
+                if ui_callback: ui_callback('ai_text', {'text': result_msg})
+                self.mouth.speak(result_msg)
+
             elif action == 'read_webpage':
                 url = command.get('url') or target or original_text or ''
                 if not url:

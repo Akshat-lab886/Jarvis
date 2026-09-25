@@ -1352,6 +1352,30 @@ def api_intel():
         out['cells']['papers'] = p
     except Exception as exc:
         out['cells']['papers'] = {'ok': False, 'why': str(exc)[:80]}
+    try:
+        from utils.ext_api import joke
+        j = cell(joke)
+        if j.get('ok'):
+            j['text'] = short(j['text'], 70)
+        out['cells']['joke'] = j
+    except Exception as exc:
+        out['cells']['joke'] = {'ok': False, 'why': str(exc)[:80]}
+    try:
+        from utils.ext_api import cat_fact
+        c = cell(cat_fact)
+        if c.get('ok'):
+            c['text'] = short(c['text'], 70)
+        out['cells']['cat_fact'] = c
+    except Exception as exc:
+        out['cells']['cat_fact'] = {'ok': False, 'why': str(exc)[:80]}
+    try:
+        from utils.ext_api import quote
+        q = cell(quote)
+        if q.get('ok'):
+            q['text'] = short(q['text'], 70)
+        out['cells']['quote'] = q
+    except Exception as exc:
+        out['cells']['quote'] = {'ok': False, 'why': str(exc)[:80]}
 
     api_intel._cache = (now, out)
     return jsonify(out)
