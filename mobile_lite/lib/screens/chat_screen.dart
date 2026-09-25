@@ -113,6 +113,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _status = e.message;
       });
       _add(_Msg(false, 'failed: ${e.message}'));
+    } catch (e) {
+      // Non-HubException (raw SocketException / TimeoutException / parse
+      // error): still must clear the pending bubble so it never sticks.
+      if (_msgs.isNotEmpty && _msgs.last.pending) _msgs.removeLast();
+      setState(() {
+        _linked = false;
+        _status = 'connection error — retry?';
+      });
+      _add(_Msg(false, 'failed: ${e.toString().split(":").first}'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -172,6 +181,10 @@ class _ChatScreenState extends State<ChatScreen> {
     } on HubException catch (e) {
       if (_msgs.isNotEmpty && _msgs.last.pending) _msgs.removeLast();
       _add(_Msg(false, 'vision failed: ${e.message}'));
+    } catch (e) {
+      // image decode / transport errors: clear the bubble, no stuck '…'.
+      if (_msgs.isNotEmpty && _msgs.last.pending) _msgs.removeLast();
+      _add(_Msg(false, 'vision failed: ${e.toString().split(":").first}'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
