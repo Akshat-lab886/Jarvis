@@ -2394,6 +2394,10 @@ if (studyBtn) {
                 btn.textContent = '[ PLAN ]';
                 // Refresh goals stack if it exists
                 if (typeof refreshGoals === 'function') refreshGoals();
+                // Re-query capability status so the panel reflects any
+                // auto-installed deps / manual setup immediately instead
+                // of requiring a manual refresh click.
+                if (typeof refreshCaps === 'function') refreshCaps();
                 // Show the plan in a toast
                 if (data.formatted) {
                     socket.emit('send_message', {message: data.formatted});

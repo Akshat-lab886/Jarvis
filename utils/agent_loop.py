@@ -484,6 +484,71 @@ def agent_mode_forced():
     return os.getenv('JARVIS_AGENT_MODE', 'auto').strip().lower() == 'on'
 
 
+def _auto_remediate(prompt):
+    """Best-effort pre-flight: auto-install pip-only capability deps.
+
+    Runs before the LLM is engaged so features activate transparently
+    when JARVIS_AUTO_UPGRADE=1. Only ever installs packages that come
+    from the curated UPGRADE_STEPS table (never LLM-supplied names).
+    Returns the reassessed CapabilityStatus list on change, else None.
+    Never raises.
+    """
+    if os.getenv('JARVIS_AUTO_UPGRADE', '0') != '1':
+        return None
+    task = str(prompt or '').strip()
+    if not task:
+        return None
+    try:
+        from utils.capabilities import (
+            assess, expand, auto_install, reassess as cap_reassess)
+        missing_now = assess(task).missing
+    except Exception:
+        return None
+
+    if not missing_now:
+        return None
+
+    # Only auto-install capabilities that are missing because of a single
+    # pip_install step with no accompanying manual credentials. Capabilities
+    # needing OAuth tokens / system permissions (email, calendar, desktop_control,
+    # code_execution) are left for the user.
+    pip_only_caps = []
+    pip_packages = []
+    for cs in missing_now:
+        steps = cs.upgrade_steps
+        if not steps:
+            continue
+        install_steps = [s for s in steps
+                         if s.get('action') == 'pip_install'
+                         and s.get('packages')]
+        manual_steps = [s for s in steps if s.get('action') != 'pip_install']
+        if install_steps and not manual_steps:
+            pip_only_caps.append(cs.name)
+            for s in install_steps:
+                pip_packages.extend(s['packages'])
+
+    if not pip_packages:
+        return None
+
+    logger.info("auto-remediating %s via pip: %s",
+                ', '.join(pip_only_caps), ', '.join(set(pip_packages)))
+    ok, output = auto_install(pip_packages)
+    if not ok:
+        logger.debug("auto-install failed (%s): %s",
+                     ', '.join(pip_packages), output)
+        return None
+
+    # Re-assess now that packages are cached-installed.
+    new_status = cap_reassess(task)
+    if new_status.available and not new_status.missing:
+        logger.info("auto-remediation succeeded: %d capability(ies) now ready",
+                    len(new_status.available))
+    else:
+        still = ', '.join(c.name for c in new_status.missing) or 'none'
+        logger.info("auto-remediation partial; still missing: %s", still)
+    return new_status
+
+
 # --------------------------------------------------------------------- #
 # The loop
 # --------------------------------------------------------------------- #
@@ -993,6 +1058,17 @@ class AgentLoop:
             return None
 
         stream_enabled = os.getenv('JARVIS_AGENT_STREAM', '1') != '0'
+
+        # Auto-remediation pre-flight: when JARVIS_AUTO_UPGRADE=1 and the
+        # task needs capabilities whose only blocker is a pip-installable
+        # dependency, install it now so features "just work" instead of
+        # forcing a round-trip through the capability_expand tool.
+        # Falls back to None (let the LLM handle it) on any failure —
+        # never raises, never blocks the loop.
+        try:
+            _auto_remediate(prompt or '')
+        except Exception as e:
+            logger.debug("auto-remediation skipped: %s", e)
 
         # Fleet tools = curated core + any live MCP servers' tools.
         fleet_tools = list(TOOL_SPECS)
