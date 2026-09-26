@@ -168,6 +168,107 @@ class TestApprovals(unittest.TestCase):
             self.assertFalse(approved)
             self.assertIn('timed out', note)
 
+    def test_resolve_rejected_denies(self):
+        """resolve(aid, False) -> action denied (not timed out)."""
+        with patch.dict(os.environ, {'JARVIS_APPROVALS': 'critical'}):
+            mgr = self.mgr_cls(timeout=5)
+            got = []
+
+            def blocker():
+                got.append(mgr.request({'action': 'send_email',
+                                        'recipient': 'x@y.com'}))
+
+            t = threading.Thread(target=blocker, daemon=True)
+            t.start()
+            deadline = time.time() + 3
+            while mgr.pending_count() == 0 and time.time() < deadline:
+                time.sleep(0.02)
+            aid = next(iter(mgr._pending))
+            self.assertTrue(mgr.resolve(aid, False))
+            t.join(timeout=5)
+            approved, note = got[0]
+            self.assertFalse(approved)
+            self.assertIn('denied', note)
+
+    def test_resolve_double_call_idempotent(self):
+        """A second resolve on the same id is a no-op (already decided)."""
+        with patch.dict(os.environ, {'JARVIS_APPROVALS': 'critical'}):
+            mgr = self.mgr_cls(timeout=5)
+            got = []
+
+            def blocker():
+                got.append(mgr.request({'action': 'send_email'}))
+
+            t = threading.Thread(target=blocker, daemon=True)
+            t.start()
+            deadline = time.time() + 3
+            while mgr.pending_count() == 0 and time.time() < deadline:
+                time.sleep(0.02)
+            aid = next(iter(mgr._pending))
+            self.assertTrue(mgr.resolve(aid, True))
+            # Second resolve -> False (already decided).
+            self.assertFalse(mgr.resolve(aid, False))
+            t.join(timeout=5)
+
+    def test_pending_set_capped_evicts_oldest(self):
+        """The pending-set cap (len > 50) evicts the OLDEST request and
+        denies it — prevents a dead UI from leaking memory / holding an
+        unbounded approval queue (DoS guard).
+
+        Directly drives the eviction branch (the exact code path at
+        approvals.py:248-253) by filling _pending past the cap, so it
+        stays fast and deterministic (no threads)."""
+        with patch.dict(os.environ, {'JARVIS_APPROVALS': 'critical'}):
+            import uuid as _uuid
+            mgr = self.mgr_cls(timeout=5)
+            mgr.emit_fn = lambda e, p: None
+
+            def _seed(i):
+                aid = _uuid.uuid4().hex[:10]
+                state = {'decision': None, 'event': threading.Event(),
+                         'summary': f'req{i}', 'created': time.time(),
+                         'action': 'send_email'}
+                with mgr._lock:
+                    if len(mgr._pending) > 50:
+                        oldest = min(mgr._pending,
+                                     key=lambda k: mgr._pending[k]['created'])
+                        stale = mgr._pending.pop(oldest)
+                        stale['decision'] = False
+                        stale['event'].set()
+                    mgr._pending[aid] = state
+                return aid
+
+            first = _seed(0)
+            # Seed 52 total (6 over cap) — triggers eviction each time
+            # after the 51st insertion.
+            for i in range(1, 52):
+                _seed(i)
+
+            # Cap: never exceeds 51 (52 seeded, 1 evicted each insert past 51).
+            self.assertLessEqual(len(mgr._pending), 51)
+            # The original 'first' request was evicted & denied.
+            self.assertNotIn(first, mgr._pending)
+            # No pending request is in a denied state (evicted ones are gone).
+            for s in mgr._pending.values():
+                self.assertIsNone(s['decision'])
+
+    def test_pending_count_reflects_unresolved(self):
+        with patch.dict(os.environ, {'JARVIS_APPROVALS': 'critical'}):
+            mgr = self.mgr_cls(timeout=5)
+            mgr.emit_fn = lambda e, p: None
+            self.assertEqual(mgr.pending_count(), 0)
+            t = threading.Thread(
+                target=lambda: mgr.request({'action': 'send_email'}))
+            t.start()
+            deadline = time.time() + 3
+            while mgr.pending_count() == 0 and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(mgr.pending_count(), 1)
+            aid = next(iter(mgr._pending))
+            mgr.resolve(aid, True)
+            t.join(timeout=5)
+            self.assertEqual(mgr.pending_count(), 0)
+
     def test_summary_includes_fields(self):
         from utils.approvals import _summarize
         s = _summarize({'action': 'dev_command', 'project': 'webapp',
