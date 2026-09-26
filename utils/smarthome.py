@@ -3,6 +3,11 @@ Jarvis Smart Home Module
 Virtual simulation of smart home devices for voice control.
 """
 
+import logging
+
+logger = logging.getLogger("Jarvis.SmartHome")
+
+
 class SmartHome:
     """
     Manages a virtual smart home with controllable devices.
@@ -12,7 +17,7 @@ class SmartHome:
     
     def __init__(self):
         """Initialize the smart home with default devices."""
-        print("Smart Home Module initialized")
+        logger.info("SmartHome module initialized")
         
         # Device registry - can be extended with more device types
         self.devices = {
@@ -112,7 +117,7 @@ class SmartHome:
             with open(path, 'w') as f:
                 json.dump(self.devices, f, indent=2)
         except Exception as e:
-            print(f"SmartHome: Failed to save state: {e}")
+            logger.warning("SmartHome: Failed to save state: %s", e)
 
     def _load(self):
         import json
@@ -127,7 +132,7 @@ class SmartHome:
                     if key in self.devices and isinstance(data, dict):
                         self.devices[key].update(data)
         except Exception as e:
-            print(f"SmartHome: Failed to load state: {e}")
+            logger.warning("SmartHome: Failed to load state: %s", e)
 
     def control_device(self, device_name, action, value=None):
         """
