@@ -444,5 +444,39 @@ class TestStartupReport(unittest.TestCase):
             self.assertIn('capability_check', banner)
 
 
+class TestBrowserCapability(unittest.TestCase):
+    """The browser capability must honestly reflect live state — a crashed
+    WebAgent worker (e.g. missing playwright node binary) must yield
+    'missing', not a silent false 'ready'."""
+
+    def test_status_returns_boolean_browser_agent(self):
+        from utils.browser_use import status
+        st = status()
+        self.assertIsInstance(st['browser_agent'], bool)
+        self.assertIn('tiers', st)
+
+    def test_crashed_agent_reports_missing(self):
+        """If the WebAgent worker thread has died, status() must report
+        False regardless of the stale 'running' flag — this guards the
+        startup-readiness race where running=True is set optimistically
+        in __init__ before the browser session is established."""
+        from utils.browser_use import status
+        from utils.agent import WebAgent
+        # A fresh WebAgent whose worker crashes (no playwright driver)
+        # must NOT report browser_agent=True once the thread is dead.
+        # We exercise the real path and check post-crash honesty.
+        a = WebAgent()
+        # wait long enough for the crash handler to run
+        import time as _t
+        _t.sleep(1.5)
+        self.assertFalse(getattr(
+            a, '_session_ok', True))  # session never established
+        # status() should not lie about readiness
+        st = status()
+        # If the thread is dead, browser_agent MUST be False.
+        if not a.thread.is_alive():
+            self.assertFalse(st['browser_agent'])
+
+
 if __name__ == '__main__':
     unittest.main()

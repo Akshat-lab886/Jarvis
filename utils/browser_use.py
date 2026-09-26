@@ -139,7 +139,12 @@ def interact(op, **kwargs):
 def status():
     try:
         agent = _agent()
-        running = bool(agent and getattr(agent, 'running', False))
+        # Both the running flag AND the worker thread must be live.
+        # On a crash the flag is flipped to False, but we also guard
+        # thread liveness defensively (a dead thread never services cmds).
+        running = bool(agent and getattr(agent, 'running', False)
+                       and getattr(getattr(agent, 'thread', None),
+                                   'is_alive', lambda: False)())
     except Exception:
         running = False
     return {'browser_agent': running, 'enabled': enabled(),

@@ -42,7 +42,7 @@ if os.environ.get('JARVIS_DEBUG_ROUTES'):
     _dbg_logger.debug("Registered Routes:\n%s", app.url_map)
 
 # Register SocketIO with Logger for Web Terminal
-from utils.logger import register_socketio
+from utils.logger import register_socketio, logger
 register_socketio(socketio)
 
 # Background thread for system vitals

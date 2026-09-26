@@ -22,7 +22,8 @@ class WebAgent:
         # Thread-safe communication
         self.command_queue = queue.Queue()
         self.result_queue = queue.Queue()
-        self.running = True
+        self.running = False  # flipped True only after the browser session
+        self._session_ok = False  # set once context+page are live
 
         # Start the dedicated browser thread
         self.thread = threading.Thread(target=self._worker_loop, daemon=True)
@@ -64,6 +65,9 @@ class WebAgent:
         try:
             with sync_playwright() as p:
                 context, page = self._open_browser(p)
+                # Browser session established — now safe to accept commands.
+                self._session_ok = True
+                self.running = True
                 
                 while self.running:
                     try:
@@ -280,6 +284,10 @@ class WebAgent:
         except Exception as e:
             web_log(f"Agent Worker Crashed: {e}")
             logger.error("Agent Worker Crashed: %s", e, exc_info=True)
+            # The worker thread is dead — flip running False so status()
+            # honestly reports the browser as unavailable (the agent can
+            # no longer service commands) instead of a silent false "ready".
+            self.running = False
 
     def _read_dom(self, page, args):
         """Compact outline of visible interactive elements + page meta."""
