@@ -260,6 +260,118 @@ class TestToolSpecs(unittest.TestCase):
                     'capability_check', 'capability_expand'}
         self.assertFalse((names - _IN_LOOP) & FORBIDDEN_TOOLS)
 
+    def test_critic_recovery_after_two_tool_failures(self):
+        """REGRESSION / recovery-path: when two consecutive tool calls
+        fail (error_streak >= 2), the critic persona injects a strategy
+        correction and the loop RE-PLANS instead of giving up or looping
+        on the same broken call.
+
+        Drives:
+          turn 1 -> model emits 2 failing 'boom' calls -> error_streak=2
+                  -> critique_failures() returns a correction
+                  -> a [STRATEGY CORRECTION] user message is appended
+                  -> continue (no final answer yet)
+          turn 2 -> model calls get_weather (succeeds) -> error_streak=0
+          turn 3 -> wrapup call -> final answer returned
+        """
+        calls = []
+
+        def failing_turn():
+            calls.append('critic_turn')
+            return ChatResult(
+                text='', finish_reason='tool_calls', provider='groq',
+                model='fake',
+                tool_calls=[ToolCall(id=None, name='boom', arguments='{}'),
+                            ToolCall(id=None, name='boom', arguments='{}')])
+
+        def recovery_turn():
+            calls.append('recovery_turn')
+            return ChatResult(
+                text='', finish_reason='tool_calls', provider='groq',
+                model='fake',
+                tool_calls=[ToolCall(id='w1', name='get_weather',
+                                     arguments='{}')])
+
+        router = FakeRouter(
+            script=[failing_turn, recovery_turn],
+            # 3rd chat() call: no tools requested -> agent loop's
+            # closing-summary wrap-up call.
+            wrapup=text_result("The weather is sunny — recovered."))
+        brain = StubBrain(router)
+        loop = AgentLoop(brain)
+        loop._executor = FakeExecutor()
+
+        seen_correction = []
+
+        real_critique = None
+        from utils.rlm import reasoner as _r
+        real_critique = _r.critique_failures
+
+        def fake_critique(brain, prompt, failures):
+            seen_correction.append(failures)
+            return ("Try the 'get_weather' tool instead of 'boom'; the "
+                    "previous approach keeps crashing the executor.")
+
+        with patch('utils.rlm.reasoner.critique_failures',
+                   side_effect=fake_critique):
+            out = loop.run("do something")
+
+        # Critic was consulted with the accumulated failure log.
+        self.assertEqual(len(seen_correction), 1)
+        self.assertEqual(seen_correction[0][-1][0], 'boom')  # (tool, err)
+
+        # A [STRATEGY CORRECTION] user message was injected into the
+        # transcript so the next turn can re-plan.
+        all_msgs = [m for batch in router.seen_messages for m in batch]
+        correction_msg = [m for m in all_msgs
+                          if m.get('role') == 'user'
+                          and 'STRATEGY CORRECTION' in str(m.get('content', ''))]
+        self.assertTrue(correction_msg,
+                        "strategy correction message was not injected")
+        self.assertIn('get_weather', correction_msg[0]['content'])
+
+        # The loop recovered: a real tool was eventually called and the
+        # run produced a final answer rather than aborting.
+        self.assertIn('recovery_turn', calls)
+        self.assertEqual(loop._executor.calls, [{'action': 'boom'},
+                                                {'action': 'boom'},
+                                                {'action': 'get_weather'}])
+        self.assertEqual(out, {"action": "chat",
+                               "response": "The weather is sunny — recovered."})
+
+    def test_two_failures_trigger_critic_only_once(self):
+        """The critic flag (not nudged) must prevent repeated nudges
+        within a single run — one correction, then the loop must rely on
+        the model recovering (or exhausting budget) without spamming the
+        critic persona."""
+        nudge_count = []
+
+        def fake_critique(brain, prompt, failures):
+            nudge_count.append(1)
+            return "stop using boom"
+
+        # Turn 1: 3 failing boom calls -> error_streak hits 2 mid-turn;
+        # critic should fire exactly ONCE at end of the turn.
+        def bad_turn():
+            return ChatResult(
+                text='', finish_reason='tool_calls', provider='g', model='m',
+                tool_calls=[ToolCall(id=None, name='boom', arguments='{}'),
+                            ToolCall(id=None, name='boom', arguments='{}'),
+                            ToolCall(id=None, name='boom', arguments='{}')])
+
+        router = FakeRouter(
+            script=[bad_turn, bad_turn],
+            wrapup=text_result("recovered"))
+        brain = StubBrain(router)
+        loop = AgentLoop(brain)
+        loop._executor = FakeExecutor()
+        with patch('utils.rlm.reasoner.critique_failures',
+                   side_effect=fake_critique):
+            out = loop.run("plz help")
+        self.assertEqual(len(nudge_count), 1)
+        self.assertEqual(out['response'], "recovered")
+
+
 
 if __name__ == '__main__':
     unittest.main()
