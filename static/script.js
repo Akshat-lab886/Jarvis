@@ -1567,7 +1567,10 @@ function renderPeople(people) {
 }
 
 if (peopleBtn && peoplePanel) {
-    peopleBtn.addEventListener('click', () => openPanel('people-panel', 'people-btn'));
+    peopleBtn.addEventListener('click', () => {
+        openPanel('people-panel', 'people-btn');
+        emitRelationship('list'); // Auto-refresh on drawer open (mirrors meeting panel).
+    });
 }
 if (peopleClose) peopleClose.addEventListener('click', closeAllPanels);
 if (personAddBtn) {
@@ -1941,6 +1944,15 @@ socket.on('cap_health', (d) => {
                 hs.dataset.pin = ''; hs.style.color = '';
                 hs.textContent = 'ALL SYSTEMS NOMINAL';
             }
+        }
+        // Make hero-sub dynamic: show real readiness + any active warnings.
+        const heroSub = document.getElementById('hero-sub');
+        if (heroSub && d.total) {
+            const pct = d.total > 0 ? Math.round((d.ready / d.total) * 100) : 0;
+            const sub = gaps + warns
+                ? `CAPS ${d.ready}/${d.total} · ${gaps} setup gaps remain · some features degraded`
+                : `${d.ready}/${d.total} capabilities active · all systems nominal`;
+            heroSub.textContent = sub;
         }
         // Surface actionable config diagnostics as toasts, once per page load.
         if (!window._capWarned && warns && window.showToast) {
