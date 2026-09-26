@@ -69,6 +69,20 @@ class Coder:
             "globals()[",
             "locals()[",
             "__import__(",
+            # Alternate execution shells / process spawn: these bypass
+            # subprocess() and os.system() patterns above. os.popen,
+            # os.exec*, os.spawn*, and the legacy commands.getoutput /
+            # os.popen2 all spawn external processes or replace the
+            # interpreter — blocked outright (high signal, no legit
+            # generated-code use).
+            "os.popen",
+            "os.exec",
+            "os.spawn",
+            "os.posix_spawn",
+            "commands.",
+            "os.remove('",
+            "os.unlink('",
+            "os.rmdir('",
         ]
 
         for term in forbidden_terms:

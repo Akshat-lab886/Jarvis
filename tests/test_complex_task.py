@@ -914,6 +914,43 @@ class TestCoder(unittest.TestCase):
             self.assertFalse(res['success'],
                              f"'{payload}' should have been rejected")
 
+    def test_exec_shell_variants_rejected(self):
+        """Alternate execution shells (os.popen, os.exec*, os.spawn*,
+        commands.*) are denied — they bypass the os.system denylist."""
+        for payload in [
+            "os.popen('rm -rf /')",
+            "os.execvp('python', ['python'])",
+            "os.spawnl(os.P_NOWAIT, 'evil', 'evil')",
+            "commands.getoutput('id')",
+            "os.posix_spawn('sh', ['sh'], {})",
+        ]:
+            res = self.coder.execute_with_retry(payload)
+            self.assertFalse(res['success'],
+                             f"'{payload}' should have been rejected")
+
+    def test_file_destruction_primitives_rejected(self):
+        """os.remove/os.unlink/os.rmdir on quoted paths are denied."""
+        for payload in [
+            "os.remove('/etc/passwd')",
+            "os.unlink('/tmp/x')",
+            "os.rmdir('/home/user')",
+        ]:
+            res = self.coder.execute_with_retry(payload)
+            self.assertFalse(res['success'],
+                             f"'{payload}' should have been rejected")
+
+    def test_safe_code_still_passes(self):
+        """Legit generated code (file I/O in workspace, print, loops)
+        is NOT blocked by the denylist — no false positives."""
+        for payload in [
+            "print('hello')",
+            "x = [1, 2, 3]; print(sum(x))",
+            "for i in range(3): print(i)",
+        ]:
+            res = self.coder.execute_with_retry(payload)
+            self.assertTrue(res['success'],
+                            f"'{payload}' should be allowed")
+
     def test_timeout_detected(self):
         res = self.coder.execute_with_retry(
             "while True: pass", timeout=1
