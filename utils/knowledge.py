@@ -1,7 +1,6 @@
 import os
 import logging
 import threading
-import time
 from pypdf import PdfReader
 import chromadb
 from chromadb.utils import embedding_functions
@@ -24,6 +23,10 @@ class Librarian:
         # ready flips True only after a successful init; lets callers
         # (auto-RAG) skip instantly instead of blocking on a broken stack
         self.ready = False
+        # Monotonic per-process sequence so chunk IDs are globally unique
+        # even when two ingest calls share a source name within the same
+        # second (time.time() alone is second-granular and collides).
+        self._ingest_seq = 0
 
         # Hard kill-switch: on machines with broken native ML libs the
         # chromadb call HANGS WITHOUT RELEASING THE GIL, freezing every
@@ -150,7 +153,13 @@ class Librarian:
             return "Error: Vault not initialized."
             
         chunks = self._chunk_text(text)
-        ids = [f"{source_name}_{int(time.time())}_{i}" for i in range(len(chunks))]
+        # Monotonic sequence guarantees uniqueness across rapid ingest
+        # calls that share a source_name (time.time() is second-granular
+        # and would collide, causing ChromaDB to either crash on
+        # duplicate IDs or silently overwrite prior chunks = data loss).
+        start = self._ingest_seq
+        self._ingest_seq += len(chunks)
+        ids = [f"{source_name}_{start + i}" for i in range(len(chunks))]
         metadatas = [{"source": source_name} for _ in range(len(chunks))]
         
         if chunks:
