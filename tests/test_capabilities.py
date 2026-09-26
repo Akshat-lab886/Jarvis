@@ -408,5 +408,41 @@ class TestExpansionPlanner(unittest.TestCase):
         self.assertTrue(hasattr(result, 'missing'))
 
 
+class TestStartupReport(unittest.TestCase):
+    """start_server emits a concise headline readiness banner; make sure
+    it stays readable and never raises."""
+
+    def test_report_contains_headline_caps(self):
+        from utils.capabilities import startup_report, _HEADLINE_CAPS
+        banner = startup_report(_use_cache=False)
+        # Every headline capability should appear by its description text.
+        from utils.capabilities import _CAPABILITIES
+        descs = {c.name: c.description for c in _CAPABILITIES}
+        for name in _HEADLINE_CAPS:
+            if name in descs:
+                self.assertIn(descs[name], banner)
+
+    def test_report_has_checkmark_or_cross(self):
+        from utils.capabilities import startup_report
+        banner = startup_report(_use_cache=False)
+        # At least one ready (✅) and the banner is non-empty.
+        self.assertTrue(banner)
+        self.assertIn('✅', banner)
+
+    def test_disabled_returns_kill_switch_message(self):
+        from utils.capabilities import startup_report
+        with patch.dict(os.environ, {'JARVIS_CAPABILITY_CHECK': '0'}):
+            banner = startup_report(_use_cache=False)
+        self.assertIn('disabled', banner.lower())
+
+    def test_report_suggests_dashboard_when_anything_missing(self):
+        """If any headline cap is not ready, the banner points the user
+        to a remediation path."""
+        from utils.capabilities import startup_report
+        banner = startup_report(_use_cache=False)
+        if '❌' in banner:
+            self.assertIn('capability_check', banner)
+
+
 if __name__ == '__main__':
     unittest.main()

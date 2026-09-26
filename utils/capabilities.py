@@ -1066,6 +1066,46 @@ def list_all(_use_cache=True):
     return results
 
 
+# Headline capabilities worth surfacing at a glance in the startup report.
+# Anything not here still shows up via the /api/capabilities dashboard.
+_HEADLINE_CAPS = (
+    'llm_reasoning', 'agent_loop', 'web_search', 'code_execution',
+    'rlm_memory', 'voice', 'mcp_tools', 'desktop_control', 'knowledge_vault',
+    'goal_tracking', 'meeting_notes',
+)
+
+
+def startup_report(_use_cache=True):
+    """One-line-per-capability readiness banner for first boot.
+
+    Returns a short markdown string suitable for the dashboard's
+    ``ai_text`` socket so the user immediately sees what Jarvis can do
+    (and what still needs enabling) without opening the capabilities page.
+
+    Never raises — a broken probe simply yields 'missing'.
+    """
+    if not enabled():
+        return "Capability checks disabled (JARVIS_CAPABILITY_CHECK=0)."
+    try:
+        all_caps = dict((c['name'], c) for c in list_all(_use_cache=_use_cache))
+    except Exception:
+        return "Capability check failed — see jarvis.log."
+    lines = []
+    for name in _HEADLINE_CAPS:
+        c = all_caps.get(name)
+        if c is None:
+            continue
+        mark = '✅' if c['status'] == 'ready' else '❌'
+        lines.append(f"{mark} {c['description']}")
+    missing = [n for n in _HEADLINE_CAPS
+               if all_caps.get(n, {}).get('status') != 'ready']
+    if missing:
+        lines.append('')
+        lines.append("(run capability_check or open the dashboard capabilities "
+                     "panel to see setup steps)")
+    return '\n'.join(lines)
+
+
 def assess(task_text):
     """
     Assess what capabilities a task needs.  Keyword-based, no LLM, <1ms.

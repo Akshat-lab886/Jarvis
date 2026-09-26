@@ -335,6 +335,18 @@ def start_server():
               "; ".join(f"{c['name']}: {c['detail']}"
                         for c in _report.failures()))
 
+    # Startup feature activation report — show the user a concise readiness
+    # banner for the headline capabilities right on the dashboard. Makes the
+    # "use majority of features" story visible at first boot instead of
+    # hiding it behind JARVIS_PROVIDER_ORDER / capability_check calls.
+    try:
+        from utils.capabilities import startup_report
+        _banner = startup_report(_use_cache=False)
+        if _banner:
+            socketio.emit('ai_text', {'text': _banner})
+    except Exception as e:
+        logger.debug("startup report skipped: %s", e)
+
     # ------------------------------------------------------------------ #
     # Integration gateway: every channel funnels through ONE pipeline
     # ------------------------------------------------------------------ #
