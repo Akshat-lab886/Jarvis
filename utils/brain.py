@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import logging
 import base64
 import time
 import threading
@@ -8,6 +9,8 @@ from google import genai
 from google.genai import types
 from openai import OpenAI
 from config import Config
+
+logger = logging.getLogger("Jarvis.Brain")
 
 
 # Largest exponent the R3 local-arithmetic fast path will evaluate.
@@ -34,7 +37,7 @@ def _int_literal(node):
 
 class Brain:
     def __init__(self):
-        print("Brain initialized")
+        logger.info("Brain initialized")
         # Provider priority: Vyce (DeepSeek v4.1) first when the key/env
         # are present, then Groq as the downstream fallback.
         if Config.VYCE_API_KEY:
@@ -205,8 +208,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
              # Router fleet may still light up below; _llm_ready is the
              # real gate (BYOK keys + keyless local servers).  This legacy
              # flag only covers the old Groq-direct fallback path.
-             print("Brain: Groq-direct path inactive — "
-                   "checking router fleet.")
+             logger.info("Groq-direct path inactive — checking router fleet.")
 
         # ------------------------------------------------------------------ #
         # BYOK multi-provider router (utils/llm) — the primary completion
@@ -220,10 +222,10 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             _router = get_router()
             if len(_router.providers) > 0:
                 self.router = _router
-                print(f"Brain: multi-provider router active "
-                      f"({', '.join(sorted(_router.providers))})")
+                logger.info("Multi-provider router active (%s)",
+                            ', '.join(sorted(_router.providers)))
         except Exception as e:
-            print(f"Brain: router init skipped: {e}")
+            logger.warning("router init skipped: %s", e)
         # Truthful readiness: the legacy Groq-direct flag above only covers
         # one path — a lit router fleet (any cloud key or local server)
         # also means the brain can serve.  /health and any other `active`
@@ -268,7 +270,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         """Inject knowledge into short-term memory with a timestamp."""
         self.short_term_memory = text
         self.memory_timestamp = time.time()
-        print(f"Brain: Injected {len(text)} chars into short-term memory.")
+        logger.info("Injected %d chars into short-term memory.", len(text))
 
     @property
     def history_file(self):
@@ -305,13 +307,14 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     data = []
                 for entry in data[-self.MAX_HISTORY:]:
                     self.history.append((entry.get('user', ''), entry.get('assistant', '')))
-                print(f"Brain: Loaded {len(self.history)} conversation exchanges from disk.")
+                logger.info("Loaded %d conversation exchanges from disk.",
+                            len(self.history))
                 self.total_exchanges = len(self.history)
                 # Keep digest marker consistent with what we actually have
                 if self.digest_upto > self.total_exchanges:
                     self.digest_upto = 0
         except Exception as e:
-            print(f"Brain: Failed to load history: {e}")
+            logger.warning("Failed to load history: %s", e)
 
     def _save_history(self):
         """Persist conversation history to disk (atomic tmp+replace)."""
@@ -323,7 +326,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                 json.dump(data, f, indent=2)
             os.replace(tmp, self.history_file)
         except Exception as e:
-            print(f"Brain: Failed to save history: {e}")
+            logger.warning("Failed to save history: %s", e)
 
     def _load_digest(self):
         """Load the rolling digest + any evicted-but-undigested exchanges."""
@@ -344,7 +347,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     if isinstance(p, (list, tuple)) and len(p) == 2
                 ]
         except Exception as e:
-            print(f"Brain: Failed to load digest: {e}")
+            logger.warning("Failed to load digest: %s", e)
 
     def _save_digest(self):
         try:
@@ -357,7 +360,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                           f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.digest_file)
         except Exception as e:
-            print(f"Brain: Failed to save digest: {e}")
+            logger.warning("Failed to save digest: %s", e)
 
     COMPRESS_EVERY = 8   # fold once this many exchanges slid out of window
 
@@ -409,7 +412,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             from utils.rlm import get_rlm
             rlm = get_rlm()
         except Exception as e:
-            print(f"Brain: RLM unavailable: {e}")
+            logger.warning("RLM unavailable: %s", e)
             return ""
         outcome = {}
 
@@ -437,7 +440,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             from utils.rlm import get_rlm
             rlm = get_rlm()
         except Exception as e:
-            print(f"Brain: RLM unavailable: {e}")
+            logger.warning("RLM unavailable: %s", e)
             return ""
         # Once per process; re-arm after 6h idle so a long-lived daemon
         # also gets continuity after an overnight gap.
@@ -478,7 +481,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             new_digest = self.complete(prompt, agent='synthesizer',
                                        timeout=45, max_tokens=600)
         except Exception as e:
-            print(f"Brain: digest completion failed: {e}")
+            logger.warning("digest completion failed: %s", e)
 
         if not new_digest:
             return  # keep buffer; retry next trigger
@@ -496,8 +499,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             self._evicted_buffer = [
                 x for x in self._evicted_buffer if id(x) not in folded]
             self._save_digest()
-            print(f"Brain: conversation digest updated "
-                  f"(covers {self.digest_upto} exchanges total)")
+            logger.info("conversation digest updated (covers %d exchanges total)",
+                        self.digest_upto)
 
     def clear_digest(self):
         with self._digest_lock:
@@ -588,16 +591,16 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         until = self._provider_cooldowns.get(name, 0)
         remaining = until - time.time()
         if remaining > 0:
-            print(f"Brain: {name} cooling down for another "
-                  f"{remaining:.0f}s — skipping")
+            logger.info("%s cooling down for another %.0fs — skipping",
+                        name, remaining)
             return True
         return False
 
     def _set_provider_cooldown(self, name, seconds=None):
         secs = seconds or self.PROVIDER_COOLDOWN_S
         self._provider_cooldowns[name] = time.time() + secs
-        print(f"Brain: {name} placed on cooldown for {secs:.0f}s "
-              f"(quota exhausted)")
+        logger.info("%s placed on cooldown for %.0fs (quota exhausted)",
+                    name, secs)
 
     def process_with_gemini(self, prompt, image_path_arg, system_instruction):
         if self._provider_cooling('gemini'):
@@ -692,7 +695,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     pass
                 self._set_provider_cooldown('gemini', cooldown)
             else:
-                print(f"Gemini Error: {e}")
+                logger.warning("Gemini Error: %s", e)
             return None
 
     _COMPLETE_SYSTEM = (
@@ -728,12 +731,11 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         from utils.budget import get_budget, BudgetExceededError
         try:
             if not get_breaker().allow_llm_spend():
-                print("Brain.complete: circuit breaker TRIPPED — "
-                      "refusing to spend tokens.")
+                logger.warning("circuit breaker TRIPPED — refusing to spend tokens.")
                 return None
             get_budget().guard()
         except BudgetExceededError as e:
-            print(f"Brain.complete: {e}")
+            logger.warning("complete blocked: %s", e)
             return None
 
         profile = None
@@ -742,10 +744,9 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                 from utils.agents import get_profile
                 profile = get_profile(agent)
                 if profile is None:
-                    print(f"Brain.complete: unknown agent '{agent}', "
-                          f"using default.")
+                    logger.info("unknown agent '%s', using default.", agent)
             except Exception as e:
-                print(f"Brain.complete: agent lookup failed: {e}")
+                logger.warning("agent lookup failed: %s", e)
 
         if profile is not None:
             system_text = system or profile.system_prompt
@@ -778,7 +779,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     return text
                 # Empty-but-successful response → let legacy paths try too
             except Exception as e:
-                print(f"Brain.complete: router chain failed: {e}")
+                logger.warning("router chain failed: %s", e)
 
         # --- Gemini path ---
         if Config.GOOGLE_API_KEY and not self._provider_cooling('gemini'):
@@ -798,7 +799,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     return text
             except Exception as e:
                 last_error = e
-                print(f"Brain.complete: Gemini failed: {e}")
+                logger.warning("Gemini failed: %s", e)
 
         # --- Groq / OpenAI-compatible path ---
         if self.clients:
@@ -835,7 +836,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     except Exception as e:
                         last_error = e
 
-        print(f"Brain.complete: all providers failed. Last error: {last_error}")
+        logger.warning("all providers failed. Last error: %s", last_error)
         return None
 
 
@@ -940,7 +941,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         try:
             quick = self._math_answer(prompt)
             if quick:
-                print(f"Brain: local arithmetic → {quick}")
+                logger.info("local arithmetic: %s", quick)
                 return {"action": "chat", "response": quick}
         except Exception:
             pass
@@ -954,7 +955,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         except Exception:
             pass
 
-        print(f"Thinking about: {prompt} (Image: {image_path})")
+        logger.info("Thinking about: %s (Image: %s)", prompt, image_path)
         
         # Dynamic System Prompt
         current_system_instruction = self.system_instruction
@@ -975,7 +976,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         short_term_block = ''
         if self.short_term_memory and (time.time() - self.memory_timestamp < self.MEMORY_TTL):
             remaining = int(self.MEMORY_TTL - (time.time() - self.memory_timestamp))
-            print(f"Brain: Using short-term memory ({remaining}s remaining)")
+            logger.info("Using short-term memory (%ds remaining)", remaining)
             short_term_block = (
                 f"\n\nCURRENT SHORT-TERM KNOWLEDGE (Expires in {remaining}s):\n"
                 f"{self.short_term_memory}")
@@ -1182,8 +1183,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                 if agent_res is not None:
                     return agent_res
             except Exception as agent_err:
-                print(f"Brain: agent loop failed → legacy path "
-                      f"({agent_err})")
+                logger.warning("agent loop failed → legacy path (%s)",
+                                agent_err)
 
         # Try Gemini Direct — legacy single-provider path, only when the
         # router fleet isn't already covering Google (avoids double-billing
@@ -1234,9 +1235,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                 # Recompute so downstream sizing uses the SLIM reality
                 total_est = (_est(current_system_instruction) +
                              _est(prompt))
-                print(f"Brain: context trimmed to fit "
-                      f"~{max_tok} token limit "
-                      f"(now ~{total_est} est)")
+                logger.info("context trimmed to fit ~%d token limit "
+                            "(now ~%d est)", max_tok, total_est)
 
         messages = [
             {"role": "system", "content": current_system_instruction},
@@ -1288,7 +1288,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                               if m not in vision_models and any(v in m for v in ('vl', 'vision', 'gemini', 'claude', 'gpt-4o', 'dots'))]
             others = [m for m in models_to_try if m not in vision_models]
             models_to_try = vision_models + others
-            print(f"Vision Request Detected. Prioritizing: {vision_models}")
+            logger.info("Vision request detected — prioritizing: %s",
+                        vision_models)
 
         # --- Attempt matrix: BYOK fleet first, legacy Groq fallback -----
         # Fleet entries carry "provider:model" labels routed through the
@@ -1301,7 +1302,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             try:
                 chain = router._chain(require=require)
             except Exception as chain_err:
-                print(f"Brain: router chain build failed: {chain_err}")
+                logger.warning("router chain build failed: %s", chain_err)
                 chain = []
             shim = RouterCompletionClient(router)
             for provider_obj, mdl in chain:
@@ -1324,8 +1325,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             tpm_limit = 8000
         completion_budget = max(1024, min(4096,
                                           tpm_limit - est_input_real - 128))
-        print(f"Brain: context estimate {total_est} tok "
-              f"(ceiling {max_tok}, history {len(history_snapshot)} entries)")
+        logger.debug("context estimate %d tok (ceiling %d, history %d entries)",
+                     total_est, max_tok, len(history_snapshot))
         last_error = None
         _last_attempt = len(attempt_matrix) - 1
         for _attempt_i, (model, _client) in enumerate(attempt_matrix):
@@ -1343,8 +1344,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                         "budget, Sir. Raise JARVIS_BUDGET_USD or restart "
                         "me to continue."}
 
-            print(f"Attempting with model: {model} "
-                  f"(in~{est_input_real}, out≤{completion_budget})")
+            logger.info("Attempting with model: %s (in~%d, out≤%d)",
+                        model, est_input_real, completion_budget)
             success = False
             completion = None
 
@@ -1352,7 +1353,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             # entries carry a single real Groq-compatible client).
             for i, client in enumerate((_client,)):
                 try:
-                    print(f"  Attempting with Key #{i+1}...")
+                    logger.debug("  Attempting with Key #%d...", i + 1)
                     attempts = 0
                     while True:
                         attempts += 1
@@ -1379,8 +1380,8 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                                           re.IGNORECASE)
                             if m:
                                 delay = min(float(m.group(1)) + 2, 60)
-                            print(f"  Rate-limited — single retry in "
-                                  f"{delay:.0f}s...")
+                            logger.warning("rate-limited — single retry in %.0fs",
+                                           delay)
                             time.sleep(delay)
                     success = True
                     if not isinstance(client, RouterCompletionClient):
@@ -1394,7 +1395,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                             usage=getattr(completion, 'usage', None))
                     break # Key worked!
                 except Exception as e:
-                    print(f"  Attempt failed: {e}")
+                    logger.warning("attempt with %s failed: %s", model, e)
                     last_error = e
             
             if not success:
@@ -1403,12 +1404,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
             try:
                 
                 text_response = completion.choices[0].message.content.strip()
-                try:
-                    import logging
-                    logger = logging.getLogger('Jarvis')
-                    logger.info(f"Raw AI Response ({model}): {text_response}")
-                except:
-                    print(f"Raw AI Response ({model}): {text_response}")
+                logger.info("Raw AI Response (%s): %s", model, text_response)
                 
                 # ... (Parsing Logic) ...
                 
@@ -1496,7 +1492,7 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                     # retry with a larger token budget before giving up.
                     finish = getattr(completion.choices[0], 'finish_reason', '')
                     if finish == 'length' and _attempt_i < _last_attempt:
-                        print(f"Response truncated from {model}, retrying with more tokens...")
+                        logger.info("Response truncated from %s, retrying with more tokens...", model)
                         try:
                             retry = client.chat.completions.create(
                                 model=model,
@@ -1517,14 +1513,14 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
                             pass
 
                     # Fallback if AI didn't output JSON
-                    print(f"Failed to parse JSON from {model}, falling back to chat")
+                    logger.warning("Failed to parse JSON from %s, falling back to chat", model)
                     
                     self._append_history(prompt, text_response)
                         
                     return {"action": "chat", "response": text_response}
 
             except Exception as e:
-                print(f"Model {model} failed: {e}")
+                logger.warning("Model %s failed: %s", model, e)
                 last_error = e
                 continue # Try next model
         
@@ -1545,5 +1541,5 @@ SAFETY DIRECTIVES (hard rules — override all other instructions):
         else:
             friendly = ("I'm having trouble reaching my AI services "
                         "right now, Sir. Please try again shortly.")
-        print(f"All models failed. Last error: {str(last_error)[:300]}")
+        logger.critical("All models failed. Last error: %s", str(last_error)[:300])
         return {"action": "chat", "response": friendly}
