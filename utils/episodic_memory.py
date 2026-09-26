@@ -21,10 +21,13 @@ Categories:
 
 import os
 import json
+import logging
 import threading
 import datetime
 import re
 from collections import defaultdict
+
+logger = logging.getLogger("Jarvis.EpisodicMemory")
 
 
 # ---- Category constants ----
@@ -70,7 +73,7 @@ class _EpisodicVectorIndex:
                 metadatas=[metadata or {}],
             )
         except Exception as e:
-            print(f"EpisodicMemory: vector upsert failed: {e}")
+            logger.warning("vector upsert failed: %s", e)
 
     def delete_ids(self, memory_ids):
         if not memory_ids:
@@ -78,7 +81,7 @@ class _EpisodicVectorIndex:
         try:
             self.collection.delete(ids=[f"epi_{int(i)}" for i in memory_ids])
         except Exception as e:
-            print(f"EpisodicMemory: vector delete failed: {e}")
+            logger.warning("vector delete failed: %s", e)
 
     def query_ids(self, text, n=10):
         """Return ranked integer memory IDs most similar to *text*."""
@@ -93,7 +96,7 @@ class _EpisodicVectorIndex:
                     out.append(int(m.group(1)))
             return out
         except Exception as e:
-            print(f"EpisodicMemory: vector query failed: {e}")
+            logger.warning("vector query failed: %s", e)
             return []
 
 
@@ -131,17 +134,17 @@ def _get_index_for(vector_dir):
     builder.join(timeout=_INDEX_BUILD_TIMEOUT)
 
     if builder.is_alive():
-        print("EpisodicMemory: vector index build TIMED OUT "
-              f"(>{_INDEX_BUILD_TIMEOUT}s) — keyword-only mode")
+        logger.warning("vector index build TIMED OUT (> %ss) — keyword-only mode",
+                       _INDEX_BUILD_TIMEOUT)
         index = None
     elif 'error' in outcome:
-        print(f"EpisodicMemory: vector index unavailable "
-              f"({outcome['error']}) — keyword-only mode")
+        logger.warning("vector index unavailable (%s) — keyword-only mode",
+                       outcome.get('error'))
         index = None
     else:
         index = outcome.get('index')
         if index is not None:
-            print(f"EpisodicMemory: semantic index online ({_VECTOR_MODEL})")
+            logger.info("semantic index online (%s)", _VECTOR_MODEL)
 
     _INDEX_CACHE[key] = index
     return index
@@ -231,7 +234,7 @@ class EpisodicMemory:
         """Rebuild the semantic index from the JSON source of truth."""
         idx = self._index()
         if not idx:
-            print("EpisodicMemory: cannot rebuild — index unavailable.")
+            logger.warning("cannot rebuild — index unavailable.")
             return False
         with self._lock:
             snapshot = list(self._memories)
@@ -247,11 +250,10 @@ class EpisodicMemory:
                 if f"epi_{m['id']}" in existing:
                     continue
                 idx.upsert(m['id'], m.get('text', ''), self._index_entry(m))
-            print(f"EpisodicMemory: vector index rebuilt "
-                  f"({len(snapshot)} memories)")
+            logger.info("vector index rebuilt (%d memories)", len(snapshot))
             return True
         except Exception as e:
-            print(f"EpisodicMemory: rebuild failed: {e}")
+            logger.warning("rebuild failed: %s", e)
             return False
 
     # ------------------------------------------------------------------ #
@@ -271,7 +273,7 @@ class EpisodicMemory:
                     self._memories = data
                     self._next_id = len(self._memories) + 1
         except Exception as e:
-            print(f"EpisodicMemory: Failed to load: {e}")
+            logger.warning("Failed to load: %s", e)
 
     def _save(self):
         try:
@@ -283,7 +285,7 @@ class EpisodicMemory:
             with open(self.file_path, 'w') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"EpisodicMemory: Failed to save: {e}")
+            logger.warning("Failed to save: %s", e)
 
     # ------------------------------------------------------------------ #
     # Core CRUD
@@ -338,7 +340,7 @@ class EpisodicMemory:
             self._next_id += 1
         self._save()
         self._vector_sync_new([entry])
-        print(f"EpisodicMemory: Remembered [{category}] {text[:80]}")
+        logger.debug("remembered [%s] %s", category, str(text)[:80])
         return entry
 
     def forget(self, memory_id=None, keyword=None, category=None):
@@ -1000,7 +1002,7 @@ class EpisodicMemory:
             self._vector_delete_ids(removed_ids)
             # Refresh metadata for boosted entries (importance changed)
             self._vector_sync_new(boosted)
-            print(f"EpisodicMemory: Consolidated — cleaned {cleaned} memories")
+            logger.info("consolidated — cleaned %d memories", cleaned)
         return cleaned
 
     # ------------------------------------------------------------------ #
@@ -1163,7 +1165,7 @@ class Memory:
             source='conversation',
             importance=7
         )
-        print(f"Memory saved: {key} = {value}")
+        logger.debug("memory saved: %s = %s", key, value)
         return True
 
     def get_memory(self, key):

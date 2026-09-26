@@ -1,9 +1,12 @@
 import time
 import os
+import logging
 import threading
 import queue
 from playwright.sync_api import sync_playwright
 from utils.logger import web_log
+
+logger = logging.getLogger("Jarvis.WebAgent")
 
 class WebAgent:
     # Shared selector for all interactable elements — read_dom and
@@ -276,7 +279,7 @@ class WebAgent:
 
         except Exception as e:
             web_log(f"Agent Worker Crashed: {e}")
-            print(f"Agent Worker Crashed: {e}")
+            logger.error("Agent Worker Crashed: %s", e, exc_info=True)
 
     def _read_dom(self, page, args):
         """Compact outline of visible interactive elements + page meta."""
