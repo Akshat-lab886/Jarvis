@@ -41,4 +41,4 @@ def web_log(message):
         try:
             socket_instance.emit('new_log', {'data': message})
         except Exception as e:
-            print(f"Socket emit failed: {e}")
+            logger.warning("Socket emit failed: %s", e)

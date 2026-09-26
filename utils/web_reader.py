@@ -8,6 +8,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus, urlparse
 import re
+import logging
+
+logger = logging.getLogger("Jarvis.WebReader")
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -64,7 +67,7 @@ def search_and_read(query, max_results=3):
         return "\n\n---\n\n".join(all_content)
         
     except Exception as e:
-        print(f"Search and read error: {e}")
+        logger.warning("Search and read error: %s", e)
         return f"I couldn't access the web: {str(e)}"
 
 
@@ -117,7 +120,7 @@ def extract_page_content(url):
         return '\n'.join(lines[:50])  # Limit to first 50 meaningful lines
         
     except Exception as e:
-        print(f"Page extraction error for {url}: {e}")
+        logger.warning("Page extraction error for %s: %s", url, e)
         return ""
 
 
@@ -157,7 +160,7 @@ def get_answer_from_web(query):
     if not query:
         return "I need a question to look up."
     query_lower = query.lower()
-    print(f"Getting web answer for: {query}")
+    logger.info("Getting web answer for: %s", query)
 
     # For weather, use wttr.in
     if 'weather' in query_lower:
@@ -237,7 +240,7 @@ def get_top_headlines(limit=8, region=None):
             return "I couldn't parse the headlines right now."
         return "Top headlines:\n" + "\n".join(f"• {h}" for h in headlines)
     except Exception as e:
-        print(f"Headlines error: {e}")
+        logger.warning("Headlines error: %s", e)
         return f"I couldn't fetch the news: {e}"
 
 
@@ -281,5 +284,5 @@ def get_wikipedia_summary(query):
         return None
         
     except Exception as e:
-        print(f"Wikipedia error: {e}")
+        logger.warning("Wikipedia error: %s", e)
         return None

@@ -94,7 +94,7 @@ def handle_quick_actions(text, executor, brain, ui_callback=None):
             if 'project_name' in blueprint:
                 executor.mouth.speak(f"Blueprint approved for {blueprint['project_name']}. Starting construction loop. This may take a moment.")
                 result = mobile.build_from_blueprint(blueprint)
-                print(result)
+                logger.info("Blueprint build result: %s", result)
                 executor.mouth.speak("Verifying code integrity...")
                 diag_res = mobile.run_diagnostics(blueprint['project_name'])
                 if "No errors found" in diag_res:
@@ -102,7 +102,7 @@ def handle_quick_actions(text, executor, brain, ui_callback=None):
                     pm.open_in_vscode(blueprint['project_name'])
                 else:
                     executor.mouth.speak("Errors detected. Initiating repair protocol.")
-                    print(f"DIAGNOSTICS REPORT:\n{diag_res}")
+                    logger.warning("Diagnostics report:\n%s", diag_res)
                     max_retries = 3
                     for i in range(max_retries):
                         executor.mouth.speak(f"Attempting fix {i+1}...")
@@ -133,9 +133,9 @@ def handle_quick_actions(text, executor, brain, ui_callback=None):
             mobile = MobileManager()
             blueprint = mobile.generate_app_blueprint(idea)
             import json
-            print("\n--- APP BLUEPRINT ---")
-            print(json.dumps(blueprint, indent=2))
-            print("---------------------")
+            logger.info("--- APP BLUEPRINT ---")
+            logger.info("Blueprint: %s", json.dumps(blueprint, indent=2))
+            logger.info("--- END BLUEPRINT ---")
             if 'project_name' in blueprint:
                 files_count = len(blueprint.get('files_to_create', []))
                 executor.mouth.speak(f"Blueprint generated for {blueprint['project_name']}. It requires {files_count} files.")
@@ -215,7 +215,7 @@ def handle_quick_actions(text, executor, brain, ui_callback=None):
                 name = name.replace(".", "").capitalize()
                 executor.mouth.speak(f"Opening Visual Studio Code for {name}...")
                 result = pm.open_in_vscode(name)
-                print(f"Dev Studio: {result}")
+                logger.info("Dev Studio: %s", result)
         except Exception as e:
             logger.error(f"VS Code Launch error: {e}", exc_info=True)
             executor.mouth.speak("I didn't catch the project name, Sir.")

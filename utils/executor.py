@@ -1693,9 +1693,9 @@ class JarvisExecutor:
                 blueprint = mobile.generate_app_blueprint(idea)
                 
                 import json
-                print("\n--- APP BLUEPRINT ---")
-                print(json.dumps(blueprint, indent=2))
-                print("---------------------")
+                logger.info("--- APP BLUEPRINT ---")
+                logger.info("Blueprint: %s", json.dumps(blueprint, indent=2))
+                logger.info("--- END BLUEPRINT ---")
                 
                 result_msg = "I couldn't generate a blueprint."
                 if 'project_name' in blueprint:
