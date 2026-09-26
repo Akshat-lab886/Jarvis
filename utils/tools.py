@@ -4,16 +4,19 @@ import webbrowser
 import platform
 import psutil
 from datetime import datetime
+import logging
 from utils.secretary import Secretary
+
+logger = logging.getLogger("Jarvis.Tools")
 
 class Tools:
     def __init__(self):
         self.os_name = platform.system()
-        print(f"Tools initialized on {self.os_name}")
+        logger.info("Tools initialized on %s", self.os_name)
         self.secretary = Secretary()
 
     def open_app(self, app_name):
-        print(f"Opening app: {app_name}")
+        logger.info("Opening app: %s", app_name)
         try:
             if self.os_name == 'Darwin':  # macOS
                 # 1. Try direct open
@@ -33,7 +36,7 @@ class Tools:
                     "word": "Microsoft Word",
                 }
                 search_name = aliases.get(app_name.lower(), app_name)
-                print(f"Direct open failed. Searching for '{search_name}'...")
+                logger.warning("Direct open failed. Searching for '%s'...", search_name)
 
                 # Spotlight queries run as argv, never through a shell: the
                 # search name comes from the LLM, and interpolating it into
@@ -64,15 +67,15 @@ class Tools:
 
                 # 5. Last Resort: Manual Directory Scan (Fuzzy)
                 if not app_path:
-                    print("Spotlight failed. Scanning directories...")
+                    logger.warning("Spotlight failed. Scanning directories...")
                     app_path = self._scan_dirs_for_app(search_name)
 
                 if app_path and app_path.endswith(".app"):
-                    print(f"Found app at: {app_path}")
+                    logger.info("Found app at: %s", app_path)
                     subprocess.run(["open", app_path], check=True)
                     return True
                 else:
-                    print(f"Could not find app '{app_name}'")
+                    logger.warning("Could not find app '%s'", app_name)
                     return False
             
             elif self.os_name == 'Windows':
@@ -82,7 +85,7 @@ class Tools:
                 subprocess.run([app_name], check=True)
                 return True
         except Exception as e:
-            print(f"Error opening app {app_name}: {e}")
+            logger.warning("Error opening app %s: %s", app_name, e)
             return False
 
     def _scan_dirs_for_app(self, search_name):
@@ -109,14 +112,14 @@ class Tools:
         return None
 
     def open_website(self, url):
-        print(f"Opening website: {url}")
+        logger.info("Opening website: %s", url)
         try:
             if not url.startswith('http'):
                 url = 'https://' + url
             webbrowser.open(url)
             return True
         except Exception as e:
-            print(f"Error opening website {url}: {e}")
+            logger.warning("Error opening website %s: %s", url, e)
             return False
 
     def get_system_info(self):
@@ -135,16 +138,16 @@ class Tools:
                                check=True, timeout=5)
                 return True
         except subprocess.CalledProcessError as e:
-            print(f"Error setting volume (Permission?): {e}")
+            logger.warning("Error setting volume (Permission?): %s", e)
             return False
         except Exception as e:
-            print(f"Error setting volume: {e}")
+            logger.warning("Error setting volume: %s", e)
             return False
 
     def media_play_pause(self):
         try:
             if self.os_name == 'Darwin':
-                print("Attempting Media Key...")
+                logger.info("Attempting Media Key...")
                 subprocess.run(["osascript", "-e",
                                'tell application "System Events" to key code 100'],
                                timeout=5)
@@ -157,7 +160,7 @@ class Tools:
                         check = subprocess.run(["pgrep", "-f", browser],
                                                stdout=subprocess.DEVNULL, timeout=3)
                         if check.returncode == 0:
-                            print(f"Sending pause command to {browser}...")
+                            logger.info("Sending pause command to %s...", browser)
                             js = "document.querySelectorAll('video').forEach(v => v.pause())"
                             if browser == 'Safari':
                                 script = f'tell application "{browser}" to do JavaScript "{js}" in document 1'
@@ -177,7 +180,7 @@ class Tools:
                             pyautogui.press('k')
                             
                     except Exception as e:
-                        print(f"Browser pause error: {e}")
+                        logger.warning("Browser pause error: %s", e)
                         continue
                 
                 return True
@@ -187,17 +190,17 @@ class Tools:
             pyautogui.press('playpause')
             return True
         except Exception as e:
-            print(f"Error toggling media: {e}")
+            logger.warning("Error toggling media: %s", e)
             return "Error: " + str(e)
             
     def play_on_youtube(self, topic):
         try:
             import pywhatkit
-            print(f"Playing on YouTube: {topic}")
+            logger.info("Playing on YouTube: %s", topic)
             pywhatkit.playonyt(topic)
             return True
         except Exception as e:
-            print(f"Error playing on YouTube: {e}")
+            logger.warning("Error playing on YouTube: %s", e)
             return False
 
     def get_battery_status(self):
@@ -212,7 +215,7 @@ class Tools:
             return f"Error reading battery: {str(e)}"
 
     def take_screenshot(self):
-        print("Taking screenshot...")
+        logger.info("Taking screenshot...")
         try:
             import pyautogui
             screenshot = pyautogui.screenshot()
@@ -224,10 +227,10 @@ class Tools:
             # Save to static folder so UI can potentially show it
             file_path = os.path.join(os.getcwd(), 'static', 'screenshot.jpg')
             screenshot.save(file_path)
-            print(f"Screenshot saved to {file_path}")
+            logger.info("Screenshot saved to %s", file_path)
             return file_path
         except Exception as e:
-            print(f"Screenshot error: {e}")
+            logger.warning("Screenshot error: %s", e)
             return None
 
     def get_calendar(self):
@@ -289,7 +292,7 @@ class Tools:
         return f"Unknown mode: {mode_name}"
 
     def _close_app(self, app_name):
-        print(f"Closing app: {app_name}")
+        logger.info("Closing app: %s", app_name)
         try:
             if self.os_name == 'Darwin':
                 # 'pkill -x' matches exact process name. 
@@ -300,7 +303,7 @@ class Tools:
             elif self.os_name == 'Windows':
                 subprocess.run(["taskkill", "/F", "/IM", f"{app_name}.exe"], stderr=subprocess.DEVNULL)
         except Exception as e:
-            print(f"Error closing {app_name}: {e}")
+            logger.warning("Error closing %s: %s", app_name, e)
 
     def search_web(self, query):
         """
@@ -319,7 +322,7 @@ class Tools:
             return "No search query provided."
         
         query = query.strip()
-        print(f"Searching web for: {query}")
+        logger.info("Searching web for: %s", query)
         
         # Try up to 3 times with slight delays
         for attempt in range(3):
@@ -341,7 +344,7 @@ class Tools:
                     
                     if context_parts:
                         context = "\n".join(context_parts)
-                        print(f"Search results (attempt {attempt + 1}):\n{context}")
+                        logger.info("Search results (attempt %s):\n%s", attempt + 1, context)
                         return context
                 
                 # If no results, try with "news" appended for current events
@@ -361,7 +364,7 @@ class Tools:
                 time.sleep(0.5)  # Small delay between retries
                 
             except Exception as e:
-                print(f"Search attempt {attempt + 1} failed: {e}")
+                logger.warning("Search attempt %s failed: %s", attempt + 1, e)
                 time.sleep(1)
                 continue
         
@@ -427,7 +430,7 @@ class Tools:
             query = symbol_or_name.lower().strip()
             symbol = name_to_symbol.get(query, symbol_or_name.upper())
             
-            print(f"Fetching stock price for: {symbol}")
+            logger.info("Fetching stock price for: %s", symbol)
             
             ticker = yf.Ticker(symbol)
             info = ticker.info
@@ -455,7 +458,7 @@ class Tools:
                 return f"I couldn't find stock data for '{symbol_or_name}'. Please check the symbol or company name."
                 
         except Exception as e:
-            print(f"Error fetching stock price: {e}")
+            logger.warning("Error fetching stock price: %s", e)
             return f"I couldn't fetch the stock price right now: {str(e)}"
 
     def get_system_vitals(self):
@@ -496,7 +499,7 @@ class Tools:
             }
             
         except Exception as e:
-            print(f"Error getting system vitals: {e}")
+            logger.warning("Error getting system vitals: %s", e)
             return {
                 "cpu": 0, "ram": 0, "battery": 100, 
                 "charging": True, "disk": 0,
@@ -565,14 +568,14 @@ class Tools:
             static_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static')
             photo_path = os.path.join(static_path, 'webcam_capture.jpg')
             
-            print("Initializing webcam...")
+            logger.info("Initializing webcam...")
             
             # Initialize webcam (0 = default camera)
             cam = cv2.VideoCapture(0)
             
             # Check if camera opened successfully
             if not cam.isOpened():
-                print("Webcam not found. Switching to MOCK MODE.")
+                logger.warning("Webcam not found. Switching to MOCK MODE.")
                 return self._use_mock_image(photo_path)
             
             # Allow camera to warm up
@@ -586,19 +589,19 @@ class Tools:
             cam.release()
             
             if not ret or frame is None:
-                print("Failed to read from webcam. Switching to MOCK MODE.")
+                logger.warning("Failed to read from webcam. Switching to MOCK MODE.")
                 return self._use_mock_image(photo_path)
             
             # Save the frame
             cv2.imwrite(photo_path, frame)
             
-            print(f"Photo captured and saved to: {photo_path}")
+            logger.info("Photo captured and saved to: %s", photo_path)
             
             # Return the absolute path (for brain analysis)
             return photo_path
             
         except Exception as e:
-            print(f"Error capturing photo: {e}")
+            logger.warning("Error capturing photo: %s", e)
             return f"I couldn't capture a photo: {str(e)}"
 
     def _use_mock_image(self, photo_path):
@@ -611,7 +614,7 @@ class Tools:
         
         # Check if user provided a mock image
         if os.path.exists(mock_source):
-            print(f"Using user provided mock image: {mock_source}")
+            logger.info("Using user provided mock image: %s", mock_source)
             # Read and verify it's a valid image
             img = cv2.imread(mock_source)
             if img is not None:
@@ -619,7 +622,7 @@ class Tools:
                 return photo_path
                 
         # Generate a placeholder "NO CAMERA" image
-        print("Generating placeholder mock image.")
+        logger.info("Generating placeholder mock image.")
         # Create a black image
         img = np.zeros((480, 640, 3), np.uint8)
         
@@ -634,7 +637,7 @@ class Tools:
         
     def lock_system(self):
         """Locks the computer screen."""
-        print("Initiating LOCKDOWN PROTOCOL")
+        logger.warning("Initiating LOCKDOWN PROTOCOL")
         try:
             if self.os_name == 'Darwin':
                 # Method 1: Simulate Cmd+Ctrl+Q (Native Lock Shortcut)
@@ -658,5 +661,5 @@ class Tools:
                 subprocess.run(["xdg-screensaver", "lock"], timeout=5)
                 return "Lock command sent."
         except Exception as e:
-            print(f"Lock error: {e}")
+            logger.warning("Lock error: %s", e)
             return f"Error locking system: {e}"
