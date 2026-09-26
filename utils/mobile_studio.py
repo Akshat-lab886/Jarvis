@@ -1,6 +1,9 @@
 import os
 import subprocess
 import shutil
+import logging
+
+logger = logging.getLogger("Jarvis.MobileStudio")
 
 class MobileManager:
     def __init__(self):
@@ -223,14 +226,14 @@ class MobileManager:
             if not project_name: return "Error: Invalid Blueprint (No Name)"
             
             # Step 1: Initialize Project
-            print(f"--- Step 1: Initialize {project_name} ---")
+            logger.info("--- Step 1: Initialize %s ---", project_name)
             init_res = self.init_flutter_app(project_name)
             if "Error" in init_res: return init_res
             
             # Step 2: Install Dependencies
             dependencies = blueprint.get('dependencies', [])
             if dependencies:
-                print(f"--- Step 2: Install Dependencies ({len(dependencies)}) ---")
+                logger.info("--- Step 2: Install Dependencies (%s) ---", len(dependencies))
                 project_path = self._resolve(project_name)
                 if project_path is None:
                     return (f"Error: Refusing to install into "
@@ -247,12 +250,12 @@ class MobileManager:
             
             created_files = []
             
-            print(f"--- Step 3: Coding Loop ({len(files)} files) ---")
+            logger.info("--- Step 3: Coding Loop (%s files) ---", len(files))
             for file_task in files:
                 path = file_task.get('path')
                 desc = file_task.get('description')
                 
-                print(f"Autonomously coding: {path}...")
+                logger.info("Autonomously coding: %s...", path)
                 
                 prompt = f"""We are building a Flutter app: {project_name}.
                 Current Goal: Write the full code for '{path}'.
@@ -290,7 +293,7 @@ class MobileManager:
                 created_files.append(path)
                 
             # Step 4: Final Link
-            print(f"--- Step 4: Final Link (main.dart) ---")
+            logger.info("--- Step 4: Final Link (main.dart) ---")
             link_prompt = f"""We are building {project_name}.
             We have created these files: {', '.join(created_files)}.
             
@@ -338,7 +341,7 @@ class MobileManager:
              if not os.path.exists(project_path):
                  return f"Error: Project {project_name} not found."
              
-             print(f"--- verifing code integrity for {project_name} ---")
+             logger.info("--- verifing code integrity for %s ---", project_name)
              
              # flutter analyze
              result = subprocess.run(
@@ -371,23 +374,23 @@ class MobileManager:
         Returns True if fixed, False if failed.
         """
         try:
-            print(f"--- Diagnosing and Repairing {project_name} ---")
+            logger.info("--- Diagnosing and Repairing %s ---", project_name)
             
             # Step 1: parse error log to find file
             # Sample: "lib/main.dart:20:5: Error: ..."
             import re
             match = re.search(r"lib/[\w/]+\.dart", error_log)
             if not match:
-                print("Could not identify broken file from logs.")
+                logger.warning("Could not identify broken file from logs.")
                 return False
                 
             broken_file = match.group(0)
-            print(f"identified broken file: {broken_file}")
+            logger.info("identified broken file: %s", broken_file)
             
             # Step 2: Read content
             current_code = self.read_file(project_name, broken_file)
             if "Error" in current_code:
-                print("Could not read broken file.")
+                logger.warning("Could not read broken file.")
                 return False
                 
             # Step 3: Ask Brain for fix
@@ -424,23 +427,23 @@ class MobileManager:
                  code = code.split("```")[1].split("```")[0]
                  
             if not code.strip():
-                print("Brain returned empty code.")
+                logger.warning("Brain returned empty code.")
                 return False
                 
             # Step 4: Overwrite
             self.write_feature(project_name, broken_file, code)
-            print(f"Applied fix to {broken_file}.")
+            logger.info("Applied fix to %s.", broken_file)
             
             # Step 5: Verify
-            print("Re-verifying...")
+            logger.info("Re-verifying...")
             new_diag = self.run_diagnostics(project_name)
             if "No errors found" in new_diag:
                 return True
             else:
-                print("Fix failed. Errors persist.")
+                logger.warning("Fix failed. Errors persist.")
                 return False
 
         except Exception as e:
-            print(f"Repair Exception: {e}")
+            logger.warning("Repair Exception: %s", e)
             return False
 

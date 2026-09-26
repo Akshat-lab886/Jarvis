@@ -5,9 +5,12 @@ Enables Jarvis to search the web and download files (PDFs, images, etc.)
 
 import os
 import re
+import logging
 import requests
 from urllib.parse import quote_plus, urlparse, unquote
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger("Jarvis.Downloader")
 
 # Download destination
 DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
@@ -34,7 +37,7 @@ def search_and_download(query, file_type="pdf"):
         search_query = f"{query} filetype:{file_type}"
         search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}"
         
-        print(f"Searching: {search_url}")
+        logger.info("Searching: %s", search_url)
         
         response = requests.get(search_url, headers=HEADERS, timeout=15)
         response.raise_for_status()
@@ -142,7 +145,7 @@ def download_file(url, filename_hint=None):
         str: Message indicating success or failure.
     """
     try:
-        print(f"Downloading: {url}")
+        logger.info("Downloading: %s", url)
 
         # Layered security guard (best-effort; never blocks when keys are
         # unset — upgrades the verdicts only when configured).

@@ -1,7 +1,10 @@
 import os
 import time
+import logging
 from utils.brain import Brain
 from utils.tools import Tools
+
+logger = logging.getLogger("Jarvis.Security")
 
 class Security:
     def __init__(self):
@@ -27,7 +30,7 @@ class Security:
         Captures a live photo and compares it with the stored admin photo using Gemini Vision.
         Returns: True (Match) or False (No Match/Error)
         """
-        print("Initiating Identity Verification...")
+        logger.info("Initiating identity verification...")
         
         # 1. Check if Admin Photo exists
         if not os.path.exists(self.admin_photo):
@@ -60,7 +63,7 @@ class Security:
             response_text = result.get('response', '')
             if isinstance(result, str): response_text = result
             
-            print(f"FaceID Result: {response_text}")
+            logger.info("FaceID result: %s", response_text)
             
             if "MATCH" in response_text and "NO_MATCH" not in response_text:
                 return True
@@ -68,5 +71,5 @@ class Security:
                 return False
                 
         except Exception as e:
-            print(f"FaceID Verification failed: {e}")
+            logger.warning("FaceID verification failed: %s", e)
             return False
