@@ -13,9 +13,11 @@ Both are thread-safe and survive restarts.
 
 import os
 import json
+import logging
 import threading
 import datetime
 
+logger = logging.getLogger("Jarvis.Tasks")
 
 class _JsonStore:
     """Base class: thread-safe JSON list store."""
@@ -39,7 +41,8 @@ class _JsonStore:
                 if isinstance(data, list):
                     self._items = data
         except Exception as e:
-            print(f"{type(self).__name__}: Failed to load {self.file_path}: {e}")
+            logger.warning("%s: Failed to load %s: %s",
+                           type(self).__name__, self.file_path, e)
 
     def _save(self):
         try:
@@ -48,7 +51,7 @@ class _JsonStore:
             with open(self.file_path, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            print(f"{type(self).__name__}: Failed to save: {e}")
+            logger.warning("%s: Failed to save: %s", type(self).__name__, e)
 
 
 class TodoList(_JsonStore):

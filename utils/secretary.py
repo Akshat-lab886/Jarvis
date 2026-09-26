@@ -1,7 +1,10 @@
 import os.path
+import logging
 import datetime
 import dateparser
 from dateparser.search import search_dates
+
+logger = logging.getLogger("Jarvis.Secretary")
 import google.auth.transport.requests
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -106,7 +109,7 @@ class Secretary:
         except Exception as e:
             return f"Failed to send email: {e}"
     def __init__(self):
-        print("Initializing Secretary Module (Google API)...")
+        logger.info("Initializing Secretary Module (Google API)...")
         self.creds = None
         self.calendar_service = None
         self.gmail_service = None
@@ -116,8 +119,8 @@ class Secretary:
             try:
                 self.creds = Credentials.from_authorized_user_file('token.json', SCOPES)
             except Exception as e:
-                print(f"Token error: {e}")
-
+                logger.warning("Token error: %s", e)
+        
         # Refresh or Login
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
@@ -128,7 +131,7 @@ class Secretary:
             
             if not self.creds:
                 if os.path.exists('client_secret.json'):
-                    print("Launching Browser for Google Login...")
+                    logger.info("Launching Browser for Google Login...")
                     try:
                         flow = InstalledAppFlow.from_client_secrets_file(
                             'client_secret.json', SCOPES)
@@ -137,9 +140,9 @@ class Secretary:
                         with open('token.json', 'w') as token:
                             token.write(self.creds.to_json())
                     except Exception as e:
-                        print(f"Auth Flow failed: {e}")
+                        logger.warning("Auth Flow failed: %s", e)
                 else:
-                    print("Error: client_secret.json not found. Secretary is disabled.")
+                    logger.warning("client_secret.json not found — Secretary disabled")
                     return
 
         # Build Services
@@ -147,9 +150,9 @@ class Secretary:
             try:
                 self.calendar_service = build('calendar', 'v3', credentials=self.creds)
                 self.gmail_service = build('gmail', 'v1', credentials=self.creds)
-                print("Secretary Module Online.")
+                logger.info("Secretary Module Online.")
             except Exception as e:
-                 print(f"Failed to build services: {e}")
+                 logger.warning("Failed to build services: %s", e)
 
     def get_upcoming_events(self, n=5):
         if not self.calendar_service:
