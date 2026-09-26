@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=68">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=69">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -171,6 +171,7 @@
         <div class="idle-meta" id="idle-meta">
             <div class="im-cell"><span class="im-lbl">ENGINE</span><span class="im-val" id="im-engine">SYNC…</span></div>
             <div class="im-cell"><span class="im-lbl">FLEET</span><span class="im-val" id="im-fleet">—</span></div>
+            <div class="im-cell"><span class="im-lbl">CAPS</span><span class="im-val num" id="im-caps" title="Capabilities ready / total">—</span></div>
             <div class="im-cell"><span class="im-lbl">NEXT FIRE</span><span class="im-val" id="im-next">—</span></div>
             <div class="im-cell"><span class="im-lbl">BUDGET</span><span class="im-val num" id="im-budget">—</span></div>
         </div>
@@ -188,6 +189,7 @@
                 <span class="ops-title"><span class="ops-dot"></span>Missions</span>
                 <span><span class="act" id="mis-tab-active">Active</span> <span class="act ghost" id="mis-tab-hist">History</span></span>
             </div>
+            <div class="ops-live" id="mis-live"></div>
             <div class="ops-body" id="missions-list"></div>
             <div class="ops-body" id="missions-history-wrap" style="display:none">
                 <div id="missions-history-stats"></div>
@@ -494,6 +496,6 @@ try {
     if (el) el.textContent = g;
 } catch (e) {}
 </script>
-<script src="{{ url_for('static', filename='script.js') }}?v=68"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=69"></script>
 </body>
 </html>

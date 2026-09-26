@@ -52,6 +52,38 @@ vitals_running = False
 # Track upload time to avoid overwriting user uploads with webcam
 last_upload_time = 0
 
+# Health payload cache: capability readiness summary + config diagnostics,
+# computed once at boot and replayed to every dashboard client on connect
+# (the server boots headless, so a one-shot boot emit would reach nobody).
+_HEALTH_PAYLOAD = None
+
+
+def _compute_health_payload():
+    """Build the startup capability report + config diagnostics as one JSON
+    payload. Re-probes on call but uses the capability TTL cache, so it is
+    cheap. Never raises — a failed probe simply yields empty fields."""
+    payload = {'banner': '', 'ready': 0, 'missing': 0,
+               'total': 0, 'warnings': [], 'headline_missing': []}
+    try:
+        from utils.capabilities import startup_report, list_all, _HEADLINE_CAPS
+        payload['banner'] = startup_report(_use_cache=True)
+        caps = list_all()
+        payload['ready'] = sum(1 for c in caps if c['status'] == 'ready')
+        payload['total'] = len(caps)
+        payload['missing'] = payload['total'] - payload['ready']
+        payload['headline_missing'] = [
+            c['name'] for c in caps
+            if c['name'] in _HEADLINE_CAPS and c['status'] != 'ready']
+    except Exception as e:
+        logger.debug("health banner skipped: %s", e)
+    try:
+        from utils.config_diagnostics import run_diagnostics
+        payload['warnings'] = run_diagnostics()
+    except Exception as e:
+        logger.debug("health warnings skipped: %s", e)
+    return payload
+
+
 from utils.brain import Brain
 from utils.executor import JarvisExecutor
 from utils.telegram_bot import JarvisTeleBot
@@ -335,26 +367,21 @@ def start_server():
               "; ".join(f"{c['name']}: {c['detail']}"
                         for c in _report.failures()))
 
-    # Startup feature activation report — show the user a concise readiness
-    # banner for the headline capabilities right on the dashboard. Makes the
-    # "use majority of features" story visible at first boot instead of
-    # hiding it behind JARVIS_PROVIDER_ORDER / capability_check calls.
+    # Startup feature activation report — build the health payload once and
+    # stash it so EVERY newly connected dashboard (not just a client lucky
+    # enough to be open at boot) replays the capability banner + config
+    # diagnostics. The server boots headless before a browser opens the UI,
+    # so a one-shot boot-time emit would reach zero clients.
+    global _HEALTH_PAYLOAD
+    _HEALTH_PAYLOAD = _compute_health_payload()
+    _HEALTH_PAYLOAD['_ts'] = time.time()
     try:
-        from utils.capabilities import startup_report
-        _banner = startup_report(_use_cache=False)
-        if _banner:
-            socketio.emit('ai_text', {'text': _banner})
+        if _HEALTH_PAYLOAD['banner']:
+            logger.info("Startup capability report:\n%s", _HEALTH_PAYLOAD['banner'])
+        for _line in _HEALTH_PAYLOAD['warnings']:
+            logger.warning("Config diagnostic: %s", _line)
     except Exception as e:
-        logger.debug("startup report skipped: %s", e)
-
-    # Configuration sanity check — surface silent contradictions and
-    # locked-down features so the user doesn't discover them the hard way.
-    try:
-        from utils.config_diagnostics import run_diagnostics
-        for _line in run_diagnostics():
-            socketio.emit('ai_text', {'text': _line})
-    except Exception as e:
-        logger.debug("config diagnostics skipped: %s", e)
+        logger.debug("startup report log skipped: %s", e)
 
     # ------------------------------------------------------------------ #
     # Integration gateway: every channel funnels through ONE pipeline
@@ -1562,6 +1589,23 @@ def handle_connect():
     tm = executor.task_manager
     recent_tasks = tm.get_recent_tasks(10)
     socketio.emit('tasks_list', {'tasks': [t.to_dict() for t in recent_tasks]})
+
+    # Replay the startup capability report + config diagnostics to THIS
+    # client. Emitted per-connect (not boot-time) because the server boots
+    # headless before any browser is open — a boot-only emit reaches nobody.
+    # Refreshed lazily if the cache is stale so a long-lived headless process
+    # still reports current state after a capability auto-installs.
+    global _HEALTH_PAYLOAD
+    if _HEALTH_PAYLOAD is None or (
+            time.time() - _HEALTH_PAYLOAD.get('_ts', 0) > 300):
+        try:
+            _HEALTH_PAYLOAD = _compute_health_payload()
+            _HEALTH_PAYLOAD['_ts'] = time.time()
+        except Exception as e:
+            logger.debug("health recompute skipped: %s", e)
+    if _HEALTH_PAYLOAD:
+        socketio.emit('cap_health', _HEALTH_PAYLOAD,
+                      to=request.sid if hasattr(request, 'sid') else None)
 
 VISION_KEYWORDS = ["look at", "what's on my screen", "read screen", "see this"]
 

@@ -1880,6 +1880,62 @@ if (missionsList) {
                     { action: btn.dataset.action, task_id: card.dataset.taskId });
     });
 }
+// Live per-step mission progress pushed into the always-visible Missions
+// ops-rail strip (task_step_started/completed/failed socket events).
+const _misLiveState = {};
+function pushMissionStep(data, status) {
+    const el = document.getElementById('mis-live');
+    if (!el || !data || !data.step) return;
+    const tid = data.task_id || '?';
+    if (status === 'FAIL') _misLiveState[tid] = 'FAIL';
+    _misLiveState[tid] = status;
+    const s = data.step;
+    const done = (s.id != null ? s.id : (data.step || {}).index || '');
+    const prog = data.progress != null ? data.progress : '';
+    const text = String(s.text || '').slice(0, 60);
+    const cls = status === 'FAIL' ? ' fail' : status === 'OK' ? ' ok' : '';
+    el.className = 'ops-live show' + cls;
+    el.innerHTML = `<b>${status}</b> MIS·${escapeHtml(String(tid).slice(0, 8))}`
+        + ` <span>#${escapeHtml(String(done))}${prog !== '' ? ' · ' + prog + '%' : ''}</span>`
+        + ` ${escapeHtml(text)}`;
+    // Clear the running line a beat after the task settles.
+    clearTimeout(pushMissionStep._t);
+    pushMissionStep._t = setTimeout(() => {
+        if (!Object.values(_misLiveState).some(v => v === 'RUN')) {
+            el.className = 'ops-live'; el.innerHTML = '';
+        }
+    }, 4000);
+}
+socket.on('cap_health', (d) => {
+    try {
+        d = d || {};
+        const caps = document.getElementById('im-caps');
+        if (caps && d.total) caps.textContent = `${d.ready}/${d.total}`;
+        const gaps = (d.headline_missing || []).length;
+        const warns = (d.warnings || []).length;
+        const hs = document.getElementById('hero-status');
+        if (hs && hs.dataset.pin !== 'load') {
+            if (gaps + warns) {
+                hs.dataset.pin = 'cap';
+                hs.style.color = 'var(--warn)';
+                hs.textContent = `${gaps + warns} SETUP GAPS · OPEN SKL`;
+            } else if (hs.dataset.pin === 'cap') {
+                hs.dataset.pin = ''; hs.style.color = '';
+                hs.textContent = 'ALL SYSTEMS NOMINAL';
+            }
+        }
+        // Surface actionable config diagnostics as toasts, once per page load.
+        if (!window._capWarned && warns && window.showToast) {
+            window._capWarned = true;
+            (d.warnings || []).slice(0, 2).forEach((w, i) => {
+                setTimeout(() => {
+                    const body = String(w).replace(/^[^ ]*\s+/, '').slice(0, 200);
+                    window.showToast('SETUP', body, 'warn', 7000);
+                }, 800 + i * 1400);
+            });
+        }
+    } catch (_) {}
+});
 socket.on('task_update', (data) => {
     const idx = currentTasks.findIndex(t => t.id === data.id);
     if (idx >= 0) currentTasks[idx] = data;
@@ -1890,9 +1946,9 @@ socket.on('tasks_list', (data) => {
     currentTasks = data.tasks || [];
     renderMissions(currentTasks);
 });
-socket.on('task_step_started', () => {});
-socket.on('task_step_completed', () => {});
-socket.on('task_step_failed', () => {});
+socket.on('task_step_started', (data) => pushMissionStep(data, 'RUN'));
+socket.on('task_step_completed', (data) => pushMissionStep(data, 'OK'));
+socket.on('task_step_failed', (data) => pushMissionStep(data, 'FAIL'));
 socket.on('task_reflection', (data) => {
     showToast('CRITIC', `${data.assessment || 'analyzing'} — recovery ${data.child_id} (${data.steps} steps)`, 'reflection');
 });
