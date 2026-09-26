@@ -11,6 +11,11 @@ FakeExecutor stub). Covers:
   - ui_callback receives ai_text events on unknown-action path.
   - Audit trail is invoked even when the action raises.
   - Privacy denials surface the "⛔ Action '{a}' denied" message.
+
+Also covers the _coerce_coord helper — a regression guard for a subtle
+falsy-zero bug where latitude/longitude of 0 (equator/prime meridian)
+was silently coerced to None by the old ``float(x or 0) or None`` idiom,
+degrading an "earthquakes near me" query to a global one.
 """
 
 import os
@@ -19,6 +24,8 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils.executor import _coerce_coord
 
 
 class _NoAudioMouth:
@@ -189,6 +196,38 @@ class TestPrivacyDenial(unittest.TestCase):
         res = ex.execute_command({'action': 'delete_file'},
                                  brain=MagicMock(), ui_callback=lambda *a: None)
         self.assertIn("denied by privacy policy", res)
+
+
+class TestCoerceCoord(unittest.TestCase):
+    """Regression guard: the falsy-zero latitude/longitude bug.
+
+    Before this helper, earthquakes() called
+        lat=float(command.get('lat') or 0) or None
+    which turned lat=0 (equator) and lon=0 (prime meridian) into None,
+    silently degrading a point query to a global one.
+    """
+
+    def test_zero_is_preserved(self):
+        self.assertEqual(_coerce_coord(0), 0.0)
+        self.assertEqual(_coerce_coord(0.0), 0.0)
+        self.assertEqual(_coerce_coord("0"), 0.0)
+        self.assertEqual(_coerce_coord("0.0"), 0.0)
+
+    def test_real_coordinates(self):
+        self.assertEqual(_coerce_coord(34.0522), 34.0522)
+        self.assertEqual(_coerce_coord("-118.2437"), -118.2437)
+
+    def test_none_is_none(self):
+        self.assertIsNone(_coerce_coord(None))
+
+    def test_missing_is_none(self):
+        self.assertIsNone(_coerce_coord(""))
+        self.assertIsNone(_coerce_coord("  "))
+
+    def test_garbage_is_none(self):
+        self.assertIsNone(_coerce_coord("abc"))
+        self.assertIsNone(_coerce_coord("N/A"))
+        self.assertIsNone(_coerce_coord([]))
 
 
 if __name__ == "__main__":

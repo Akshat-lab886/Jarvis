@@ -26,6 +26,23 @@ from utils.audit import get_audit, DESTRUCTIVE_ACTIONS as _AUDIT_DESTRUCTIVE
 
 logger = logging.getLogger("Jarvis.Executor")
 
+
+def _coerce_coord(value):
+    """Parse a coordinate from free-form LLM input.
+
+    Returns a float or None (when absent/unparseable). Unlike the old
+    ``float(x or 0) or None`` idiom, this preserves the falsy float 0.0
+    — latitude/longitude of 0 (equator / prime meridian) is a *valid*
+    location, not "missing". Coerces ints (e.g. "0" from JSON) too.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f
+
 class JarvisExecutor:
     def __init__(self):
         self.mouth = Mouth()
@@ -513,8 +530,8 @@ class JarvisExecutor:
                     result_msg = earthquakes(
                         limit=int(command.get('limit') or 10),
                         radius_km=int(command.get('radius_km') or 500),
-                        lat=float(command.get('lat') or 0) or None,
-                        lon=float(command.get('lon') or 0) or None)
+                        lat=_coerce_coord(command.get('lat')),
+                        lon=_coerce_coord(command.get('lon')))
                 except Exception as e:
                     result_msg = f"Earthquake data unavailable: {e}"
                 if ui_callback: ui_callback('ai_text', {'text': result_msg})
