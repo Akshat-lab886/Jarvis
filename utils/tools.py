@@ -572,22 +572,24 @@ class Tools:
             
             # Initialize webcam (0 = default camera)
             cam = cv2.VideoCapture(0)
-            
-            # Check if camera opened successfully
-            if not cam.isOpened():
-                logger.warning("Webcam not found. Switching to MOCK MODE.")
-                return self._use_mock_image(photo_path)
-            
-            # Allow camera to warm up
-            import time
-            time.sleep(0.5)
-            
-            # Capture a frame
-            ret, frame = cam.read()
-            
-            # Release the camera immediately
-            cam.release()
-            
+            try:
+                # Check if camera opened successfully
+                if not cam.isOpened():
+                    logger.warning("Webcam not found. Switching to MOCK MODE.")
+                    return self._use_mock_image(photo_path)
+
+                # Allow camera to warm up
+                import time
+                time.sleep(0.5)
+
+                # Capture a frame
+                ret, frame = cam.read()
+            finally:
+                # Always release the device handle — if read() raises a
+                # hardware error, the previous code skipped release(),
+                # leaking the camera (green light on, other apps blocked).
+                cam.release()
+
             if not ret or frame is None:
                 logger.warning("Failed to read from webcam. Switching to MOCK MODE.")
                 return self._use_mock_image(photo_path)
