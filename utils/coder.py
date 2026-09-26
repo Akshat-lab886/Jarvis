@@ -380,19 +380,68 @@ class Coder:
     def execute_with_retry(self, code_string, max_retries=2, timeout=30):
         """Execute code and report structured success based on exit code.
 
+        Retries ONLY on transient infrastructure failures (subprocess
+        spawn errors, docker daemon hiccups, timeouts) — never on
+        deterministic script failures (nonzero exit / syntax error),
+        since re-running identical bad code cannot succeed and risks an
+        infinite retry loop. See utils/coder.py design note + the "80%
+        Problem" / infinite-loop guidance in agentic coding literature.
+
         Returns {'success': bool, 'output': str, 'stdout', 'stderr',
                  'retries_remaining'}.
         """
         res = self._run_python(code_string, timeout=timeout)
-        output = self._format_result(res)
+        retries_used = 0
+        last_res = res
+
+        # A persistent TimeoutExpired means the code itself hangs —
+        # retrying the identical code would burn max_retries * timeout
+        # seconds for nothing. Cap at one retry so a transient daemon
+        # flake can recover, but a self-infinite loop cannot spin.
+        persistent_timeout = 0
+        while retries_used < max_retries:
+            # Non-timeout, non-infra errors are deterministic → stop.
+            rc = last_res.get('returncode', -1)
+            stderr = last_res.get('stderr', '')
+            if last_res.get('success'):
+                break
+            if _is_timeout(last_res) or 'timed out' in stderr.lower():
+                persistent_timeout += 1
+                if persistent_timeout >= 2:
+                    logger.warning("Code execution timed out persistently — "
+                                   "not retrying (would infinite-loop).")
+                    break
+            elif rc == -1:
+                # ast_scan / validate_safety / subprocess error — likely
+                # infra. Allow one retry.
+                pass
+            else:
+                # Deterministic script failure (nonzero exit, real crash) —
+                # no point retrying the same bytes.
+                logger.debug("Deterministic failure (rc=%d) — not retrying.", rc)
+                break
+
+            retries_used += 1
+            logger.info("Retrying code execution (attempt %d/%d)...",
+                        retries_used, max_retries)
+            last_res = self._run_python(code_string, timeout=timeout)
+
+        output = self._format_result(last_res)
         return {
-            'success': res['success'],
+            'success': last_res['success'],
             'output': output,
-            'stdout': res['stdout'],
-            'stderr': res['stderr'],
-            'returncode': res['returncode'],
-            'retries_remaining': max_retries,
+            'stdout': last_res['stdout'],
+            'stderr': last_res['stderr'],
+            'returncode': last_res['returncode'],
+            'retries_remaining': max(0, max_retries - retries_used),
         }
+
+
+def _is_timeout(res):
+    """True when a run result reflects a subprocess timeout (not app crash)."""
+    rc = res.get('returncode')
+    stderr = (res.get('stderr', '') or '').lower()
+    return rc in (-1, 124) and ('timed out' in stderr or 'timeout' in stderr)
 
 
 if __name__ == "__main__":
