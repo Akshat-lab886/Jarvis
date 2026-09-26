@@ -17,6 +17,7 @@ knowledge_input/*
 workspace/
 memory_vault/
 jarvis.log
+jarvis.log*
 response.mp3
 test_audio.mp3
 
