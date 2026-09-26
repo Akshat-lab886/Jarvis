@@ -112,20 +112,24 @@ class CheckpointManager:
 
             manifest = {'label': str(label), 'note': str(note or '')[:300],
                         'created': datetime.datetime.now().isoformat(),
-                        'files': []}
+                        'files': [], 'skipped': []}
             copied = 0
             for src in files:
+                rel = os.path.relpath(src, _BASE_DIR)
+                # Symmetry with rollback's guard: a file outside the
+                # repo root would be stored under ``..`` components
+                # that rollback refuses to restore.  Skip it rather
+                # than write an unrecoverable entry (which would also
+                # physically escape the snapshot dir on disk).
+                if (rel in ('.', '..') or rel.startswith('..')
+                        or os.path.isabs(rel)):
+                    manifest['skipped'].append(rel)
+                    logger.debug("checkpoint skipped out-of-root: %s", src)
+                    continue
                 try:
                     if os.path.getsize(src) > _MAX_FILE_BYTES:
-                        continue
-                    rel = os.path.relpath(src, _BASE_DIR)
-                    # Symmetry with rollback's guard: a file outside the
-                    # repo root would be stored under ``..`` components
-                    # that rollback refuses to restore.  Skip it rather
-                    # than write an unrecoverable entry (which would also
-                    # physically escape the snapshot dir on disk).
-                    if (rel in ('.', '..') or rel.startswith('..')
-                            or os.path.isabs(rel)):
+                        manifest['skipped'].append(rel)
+                        logger.warning("checkpoint skipped large file (>2MB): %s", src)
                         continue
                     dst = os.path.join(snap_dir, rel)
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -133,6 +137,7 @@ class CheckpointManager:
                     manifest['files'].append(rel)
                     copied += 1
                 except Exception as e:
+                    manifest['skipped'].append(rel)
                     logger.debug("checkpoint copy skipped (%s): %s", src, e)
 
             with open(os.path.join(snap_dir, 'manifest.json'),
@@ -140,8 +145,12 @@ class CheckpointManager:
                 json.dump(manifest, f, indent=2)
 
             self._prune()
-            logger.info("checkpoint '%s' saved: %d file(s)", label, copied)
-            return (f"Checkpoint saved: {slug} ({copied} file(s)). "
+            skipped = len(manifest['skipped'])
+            logger.info("checkpoint '%s' saved: %d file(s)%s",
+                        label, copied,
+                        (f", {skipped} skipped" if skipped else ""))
+            detail = f" ({skipped} skipped)" if skipped else ""
+            return (f"Checkpoint saved: {slug} ({copied} file(s)){detail}. "
                     f"Rollback anytime with /rollback {slug}.")
         except Exception as e:
             logger.warning("checkpoint failed: %s", e)
