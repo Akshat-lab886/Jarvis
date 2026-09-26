@@ -200,6 +200,29 @@ class TestClassify(unittest.TestCase):
     def test_chat(self):
         self.assertEqual(_classify_step("Explain quantum computing"), StepType.CHAT)
 
+    def test_process_not_treated_as_code(self):
+        """'process' is a common English verb, not a code-intent signal.
+        'Process the customer order' was misclassified as StepType.CODE
+        (which would execute Python against a non-code instruction)."""
+        self.assertEqual(_classify_step("Process the customer order"),
+                         StepType.CHAT)
+        self.assertEqual(_classify_step("Process the user's request"),
+                         StepType.CHAT)
+
+    def test_tool_action_verbs(self):
+        """Concrete tool verbs map to TOOL, not code."""
+        self.assertEqual(_classify_step("Download the spreadsheet"),
+                         StepType.TOOL)
+        self.assertEqual(_classify_step("Send email to the team"),
+                         StepType.TOOL)
+
+    def test_tie_prefers_code(self):
+        """When a step matches both CODE and SEARCH equally, CODE wins
+        (the documented bias — favors executable plans)."""
+        # 'compare' is SEARCH; 'analyze data' is CODE — one each, tie.
+        self.assertEqual(_classify_step("Compare and analyze data sets"),
+                         StepType.CODE)
+
 
 class TestSerialization(unittest.TestCase):
     def test_step_roundtrip(self):

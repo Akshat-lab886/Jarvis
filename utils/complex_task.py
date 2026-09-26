@@ -76,7 +76,7 @@ class StepTimeoutError(RuntimeError):
 
 _CODE_KEYWORDS = frozenset([
     'write', 'code', 'script', 'program', 'calculate', 'compute',
-    'process', 'analyze data', 'build', 'generate', 'parse', 'transform',
+    'analyze data', 'build', 'generate', 'parse', 'transform',
     'algorithm', 'function', 'class', 'module', 'regex', 'json',
     'csv', 'dataframe', 'matrix', 'fft', 'sort', 'filter', 'pipeline',
 ])
