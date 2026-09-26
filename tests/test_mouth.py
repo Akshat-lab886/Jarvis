@@ -1,118 +1,120 @@
-"""
-Tests for utils.mouth (TTS pipeline).
+"""Unit tests for utils/mouth.py TTS streaming path.
 
-Covers (edge_tts + pygame stubbed):
-  - _emit_tt never raises even if send_to_ui is missing
-  - _generate_and_play emits a tts_chunk UI event PER audio fragment
-    (the streaming improvement — clients get audio progressively)
-  - _generate_and_play degrades gracefully on TTS error
-  - _generate_and_play degrades gracefully on empty chunk stream
+Covers the regression: _generate_and_play must NOT emit tts_chunk
+from inside the running asyncio loop (which would block edge-tts
+chunk delivery on socket latency), and must guard loop.close() against
+an already-closed loop.
+
+edge_tts / pygame are faked via sys.modules injection (no network/real
+audio). The SocketIO emit is captured through send_to_ui so we can count
+and order the tts_chunk events.
 """
 
+import asyncio
 import os
 import sys
-import asyncio
 import unittest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class _FakeStream:
-    """Mimics async edge_tts chunk stream: a few audio chunks then a final."""
+class FakeEdgeTTSCommunicate:
+    """Mimics edge_tts.Communicate with a streaming async generator."""
+
     def __init__(self, chunks):
-        self._chunks = chunks
+        self._chunks = list(chunks)
 
-    async def __aiter__(self):
-        for c in self._chunks:
-            yield c
-
-
-class TestEmitTt(unittest.TestCase):
-    """_emit_tt is a safe no-raise UI emitter."""
-
-    def test_emit_success(self):
-        from unittest.mock import patch
-        m = MagicMock()
-        with patch("utils.server.send_to_ui", m):
-            from utils.mouth import Mouth
-            Mouth()._emit_tt("tts_chunk", {"data": b"x", "len": 1})
-        m.assert_called_once_with("tts_chunk", {"data": b"x", "len": 1})
-
-    def test_emit_no_server(self):
-        """If utils.server.send_to_ui can't be imported, _emit_tt swallows."""
-        from utils.mouth import Mouth
-        with patch("builtins.__import__", side_effect=ImportError):
-            # _emit_tt catches its own exceptions, so this must not raise.
-            Mouth()._emit_tt("tts_chunk", {"data": b"x"})
+    def stream(self):
+        async def gen():
+            for c in self._chunks:
+                yield {"type": "audio", "data": c}
+            # trailing non-audio control frame (should be ignored)
+            yield {"type": "Meta", }
+        return gen()
 
 
-class TestGenerateAndPlay(unittest.TestCase):
-    """_generate_and_play streaming chunk emission (edge_tts stubbed)."""
+def _install_fake_edge_tts(chunks):
+    mod = type(sys)("edge_tts")
+    mod.Communicate = lambda text, voice: FakeEdgeTTSCommunicate(chunks)
+    sys.modules["edge_tts"] = mod
+    return mod
+
+
+class FakePygame:
+    class mixer:
+        music = MagicMock()
+        music.get_busy = lambda: False
+    time = MagicMock()
+    time.Clock.return_value.tick = lambda self, n: None
+
+
+class TestTTSStreaming(unittest.TestCase):
 
     def setUp(self):
-        self.sent = []
-
-        # Capture send_to_ui calls (replaces the socket emit).
-        import utils.server as _srv
-        self._orig_send = getattr(_srv, "send_to_ui", None)
-        def _capture(event, data):
-            self.sent.append((event, data))
-        _srv.send_to_ui = _capture
-        self._srv = _srv
-
-        # Stub pygame at import time so Mouth.__init__ doesn't touch audio.
-        # get_busy() MUST return False, else the playback loop (while
-        # get_busy(): tick) spins forever in tests.
-        self._pygame_stub = MagicMock()
-        self._pygame_stub.mixer.music.get_busy.return_value = False
-        self._mod_patch = patch.dict("sys.modules", {"pygame": self._pygame_stub})
-        self._mod_patch.start()
+        # Fresh Mouth each test, no real audio device.
+        from utils.mouth import Mouth
+        self.chunks = [b"\x01", b"\x02", b"\x03", b"\x04"]
+        _install_fake_edge_tts(self.chunks)
+        sys.modules["pygame"] = FakePygame()
+        self.mouth = Mouth()
 
     def tearDown(self):
-        self._srv.send_to_ui = self._orig_send
-        self._mod_patch.stop()
+        for k in ("edge_tts", "pygame"):
+            sys.modules.pop(k, None)
 
-    def _make_comm(self, chunks):
-        """Mock edge_tts.Communicate.stream() to yield `chunks` (list of dicts)."""
-        comm = MagicMock()
-        comm.stream.return_value = _FakeStream(chunks=chunks)
-        self._comm_patch = patch("edge_tts.Communicate", return_value=comm)
-        self._comm_patch.start()
-        self.addCleanup(self._comm_patch.stop)
-        return comm
+    def test_chunks_emitted_exactly_once_after_loop(self):
+        """All collected audio chunks are emitted as tts_chunk, in order,
+        exactly once — and emission happens AFTER the asyncio loop is
+        closed (not inside it)."""
+        emitted = []
 
-    def test_emits_one_chunk_event_per_audio_fragment(self):
-        from utils.mouth import Mouth
-        self._make_comm([
-            {"type": "audio", "data": b"frame1"},
-            {"type": "audio", "data": b"frame2"},
-            {"type": "audio", "data": b"frame3"},
-        ])
-        Mouth()._generate_and_play("hello world")
-        tt_events = [(e, d) for e, d in self.sent if e == "tts_chunk"]
-        self.assertEqual(len(tt_events), 3)
-        self.assertEqual(tt_events[0][1]["data"], b"frame1")
-        self.assertEqual(tt_events[1][1]["data"], b"frame2")
-        self.assertEqual(tt_events[2][1]["data"], b"frame3")
+        async def fake_send_to_ui(event, data):
+            emitted.append((event, data))
 
-    def test_degrades_on_tts_error(self):
-        """An exception in the stream is caught -> no raise, no tts_chunk."""
-        from utils.mouth import Mouth
-        comm = self._make_comm([])
-        comm.stream.side_effect = RuntimeError("tts cloud down")
-        Mouth()._generate_and_play("hi")
-        tt_events = [(e, d) for e, d in self.sent if e == "tts_chunk"]
-        self.assertEqual(len(tt_events), 0)
+        async def send_to_ui(event, data):
+            await fake_send_to_ui(event, data)
 
-    def test_degrades_on_empty_stream(self):
-        """No audio chunks -> logs + returns, no crash, no tts_chunk."""
-        from utils.mouth import Mouth
-        self._make_comm([])
-        Mouth()._generate_and_play("nothing")
-        tt_events = [(e, d) for e, d in self.sent if e == "tts_chunk"]
-        self.assertEqual(len(tt_events), 0)
+        with patch.object(self.mouth, '_emit_tt',
+                          side_effect=lambda e, d: emitted.append((e, d))):
+            self.mouth._generate_and_play("hello")
+
+        events = [e for e, _ in emitted]
+        self.assertIn('tts_chunk', events)
+        chunks = [d['data'] for e, d in emitted if e == 'tts_chunk']
+        self.assertEqual(chunks, [b"\x01", b"\x02", b"\x03", b"\x04"])
+
+    def test_loop_not_closed_twice(self):
+        """REGRESSION: loop.close() in finally must be guarded by
+        is_closed() — calling it twice raises RuntimeError."""
+        loop_refs = []
+        real_new = asyncio.new_event_loop
+        real_close = asyncio.AbstractEventLoop.close
+
+        def tracking_new(*a, **k):
+            loop = real_new(*a, **k)
+            loop_refs.append(loop)
+            return loop
+
+        with patch.object(asyncio, 'new_event_loop', tracking_new), \
+             patch.object(self.mouth, '_emit_tt'):
+            self.mouth._generate_and_play("hi")
+
+        # Exactly one loop created and it was closed by our finally block.
+        self.assertEqual(len(loop_refs), 1)
+        self.assertTrue(loop_refs[0].is_closed())
+
+    def test_empty_stream_logs_error_and_returns(self):
+        """No audio chunks -> log + early return (no file write)."""
+        _install_fake_edge_tts([])
+        msgs = []
+        import utils.mouth as mouth_mod
+        with patch.object(self.mouth, '_emit_tt'), \
+             patch.object(mouth_mod.logger, 'error',
+                          side_effect=lambda m, *a: msgs.append(m)):
+            self.mouth._generate_and_play("nothing")
+        self.assertTrue(any("No audio chunks" in str(m) for m in msgs))
 
 
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

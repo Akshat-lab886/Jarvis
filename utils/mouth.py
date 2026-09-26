@@ -115,19 +115,19 @@ class Mouth:
                         if chunk["type"] == "audio" and "data" in chunk:
                             data = chunk["data"]
                             chunks.append(data)
-                            # Emit progressive TTS chunks so any SocketIO
-                            # client (desktop web UI, mobile relay) can
+                            # Progressively emit MP3 frame fragments so any
+                            # SocketIO client (desktop web UI, mobile relay)
                             # stream-play progressively instead of waiting
-                            # for the whole utterance. Each chunk is a raw
-                            # MP3 frame fragment — clients buffer until the
-                            # next chunk arrives; playback stays gapless
-                            # because edge-tts emits contiguous chunks.
-                            self._emit_tt('tts_chunk',
-                                          {'data': data, 'len': len(data)})
+                            # for the whole utterance.
+                            # Collect only here — emitting synchronously
+                            # from inside the running loop would block
+                            # edge-tts chunk delivery and stall TTS.
+                            # Chunks are flushed after the loop ends.
                     return chunks
                 audio_chunks = loop.run_until_complete(_collect_chunks())
             finally:
-                loop.close()
+                if not loop.is_closed():
+                    loop.close()
 
             if not audio_chunks:
                 logger.error("TTS: No audio chunks received.")
@@ -136,6 +136,12 @@ class Mouth:
             with open(output_file, 'wb') as f:
                 for c in audio_chunks:
                     f.write(c)
+
+            # Flush collected chunks progressively now that the asyncio
+            # loop is closed — emit runs on the worker thread with no live
+            # loop to block, so socket latency never stalls generation.
+            for c in audio_chunks:
+                self._emit_tt('tts_chunk', {'data': c, 'len': len(c)})
 
             logger.info(f"TTS: {os.path.getsize(output_file)} bytes")
         except Exception as e:
