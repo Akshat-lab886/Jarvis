@@ -1,5 +1,8 @@
 import os
 import subprocess
+import logging
+
+logger = logging.getLogger("Jarvis.DevStudio")
 
 class ProjectManager:
     def __init__(self):
@@ -244,5 +247,5 @@ h1 { color: #333; }"""
             shutil.make_archive(base_name, 'zip', project_path)
             return base_name + ".zip"
         except Exception as e:
-            print(f"Zip Error: {e}")
+            logger.warning("Zip Error: %s", e)
             return None

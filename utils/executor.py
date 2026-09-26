@@ -1724,7 +1724,7 @@ class JarvisExecutor:
                     
                     # Step 2: Build
                     build_result = mobile.build_from_blueprint(blueprint)
-                    print(build_result)
+                    logger.info("Build result: %s", build_result)
                     
                     if "Error" in build_result or "failed" in build_result.lower():
                         self.mouth.speak(f"Construction encountered an error: {build_result}")
