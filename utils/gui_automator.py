@@ -3,6 +3,9 @@ import pyautogui
 import time
 import subprocess
 import platform
+import logging
+
+logger = logging.getLogger("Jarvis.GUIAutomator")
 
 _APP_NAME_UNSAFE = re.compile(r'[^A-Za-z0-9 .\-_/]')
 
@@ -21,7 +24,7 @@ class Operator:
     def __init__(self):
         # Safety Feature: Failsafe triggered by moving mouse to top-left corner
         pyautogui.FAILSAFE = True
-        print("Operator Module Initialized. PyAutoGUI Failsafe is ON.")
+        logger.warning("Operator initialized. PyAutoGUI FAILSAFE is ON.")
 
     def open_app(self, app_name):
         """
