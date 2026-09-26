@@ -739,7 +739,7 @@ socket.on('photo_taken', (data) => {
     if (data && data.photo_url) _lastImage = data.photo_url;
 });
 
-// Capture button click handler
+// Capture button click handler — wire only if vision UI ever returns.
 const captureBtn = document.getElementById('capture-btn');
 if (captureBtn) {
     captureBtn.addEventListener('click', () => {
@@ -785,57 +785,75 @@ window.visionLast = function () { return _lastImage; };
 const uploadBtn = document.getElementById('upload-btn');
 const fileInput = document.getElementById('image-upload');
 
+// The IMG button just opens the native file picker. The unified upload path
+// (uploadImageForVision + wireImageDrop below) handles change/drag/paste.
 if (uploadBtn && fileInput) {
-    uploadBtn.addEventListener('click', () => {
-        fileInput.click();
-    });
-
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files[0]) {
-            const formData = new FormData();
-            formData.append('file', e.target.files[0]);
-
-            fetch('/upload', {
-                method: 'POST',
-                body: formData
-            })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Upload success:', data);
-
-                    // Immediately update UI to show uploaded photo
-                    const photoFrame = document.getElementById('photo-frame');
-                    if (photoFrame) {
-                        photoFrame.classList.add('flash');
-                        setTimeout(() => photoFrame.classList.remove('flash'), 300);
-
-                        let img = photoFrame.querySelector('img');
-                        if (!img) {
-                            img = document.createElement('img');
-                            photoFrame.appendChild(img);
-                        }
-
-                        // Force reload with timestamp
-                        img.src = '/static/webcam_capture.jpg?t=' + new Date().getTime();
-                        photoFrame.classList.add('has-photo');
-                    }
-
-                    // Track the new image and auto-describe it via vision.
-                    _lastImage = (data && data.filename)
-                        ? '/static/' + data.filename : '/static/webcam_capture.jpg';
-                    if (window.runVision) {
-                        window.runVision(_lastImage,
-                            'Describe this uploaded image in a few clear sentences.');
-                    }
-                })
-                .catch(error => {
-                    console.error('Upload error:', error);
-                });
-        }
-    });
+    uploadBtn.addEventListener('click', () => fileInput.click());
 }
 
-// --- WAKE WORD & STATE LOGIC ---
+// Shared image-to-vision uploader (used by file input, drag-drop, paste).
+function uploadImageForVision(file) {
+    if (!file || !/^image\//.test(file.type)) {
+        if (window.showToast) window.showToast('IMG', 'Only image files are supported.', 'warn', 3000);
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        if (window.showToast) window.showToast('IMG', 'Image exceeds 10 MB limit.', 'warn', 3000);
+        return;
+    }
+    const btn = document.getElementById('upload-btn');
+    if (btn) btn.classList.add('busy');
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch('/upload', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            _lastImage = (data && data.filename)
+                ? '/static/' + data.filename : '/static/webcam_capture.jpg';
+            if (window.runVision) {
+                window.runVision(_lastImage,
+                    'Describe this uploaded image in a few clear sentences.');
+            }
+        })
+        .catch(() => { if (window.showToast) window.showToast('IMG', 'Upload failed.', 'error', 3000); })
+        .finally(() => { if (btn) btn.classList.remove('busy'); });
+}
+
+// Drag an image onto the transcript, or paste one, to run vision on it.
+(function wireImageDrop() {
+    const zone = document.getElementById('message-container');
+    const input = document.getElementById('image-upload');
+    if (zone) {
+        ['dragenter', 'dragover'].forEach(ev =>
+            zone.addEventListener(ev, (e) => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                    e.preventDefault(); zone.classList.add('dropping');
+                }
+            }));
+        ['dragleave', 'drop'].forEach(ev =>
+            zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('dropping'); }));
+        zone.addEventListener('drop', (e) => {
+            const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) uploadImageForVision(f);
+        });
+    }
+    if (input) {
+        input.addEventListener('change', (e) => {
+            const f = e.target.files && e.target.files[0];
+            if (f) uploadImageForVision(f);
+        });
+    }
+    document.addEventListener('paste', (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const it of items) {
+            if (it.type && it.type.startsWith('image/')) {
+                const f = it.getAsFile();
+                if (f) { uploadImageForVision(f); break; }
+            }
+        }
+    });
+})();
 
 function wakeUp() {
     if (!isAwake) {

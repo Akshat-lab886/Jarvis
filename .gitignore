@@ -55,3 +55,6 @@ MEMORY.md
 
 # Local model cache (vision/etc.) — binaries, never commit
 .hf_cache/
+
+# user-uploaded vision images (runtime artifacts)
+static/upload_*

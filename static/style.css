@@ -722,6 +722,22 @@ code {
 #mic-btn svg { width: 14px; height: 14px; flex: none; }
 #mic-btn.listening, #mic-btn.active { color: var(--fail); background: var(--fail-dim); border-color: rgba(248,113,113,.4); }
 .mic { font-family: var(--font-mono); }
+#upload-btn {
+    height: 38px; padding: 0 15px;
+    color: var(--text-2); font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; font-family: var(--font-mono);
+    flex: none; border: 1px solid var(--line);
+    background: var(--bg-2); transition: all 0ms;
+    display: inline-flex; align-items: center; gap: 7px; border-radius: 0;
+}
+#upload-btn:hover { color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim); }
+#upload-btn svg { width: 14px; height: 14px; flex: none; }
+#upload-btn.busy { color: var(--accent); border-color: var(--accent-line); }
+.feed-scroll.dropping {
+    outline: 1px dashed var(--accent-line);
+    outline-offset: -4px;
+    background: var(--accent-dim);
+}
 
 .ticker {
     display: flex; align-items: center; gap: 9px;
