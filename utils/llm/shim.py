@@ -40,10 +40,15 @@ class RouterCompletionClient:
 
     def _create(self, model=None, messages=None, max_tokens=None,
                 temperature=0.2, timeout=45, stream=False, **kwargs):
+        # Forward OpenAI-style arguments that the Router understands
+        # (tools / tool_choice / response_format / seed / user / ...).
+        # Anything unrecognized is also passed through via **kwargs so
+        # new Router params don't require a shim change.
         result = self.router.chat(
             messages, models=[model] if model else None,
             max_tokens=max_tokens, temperature=temperature,
-            timeout=timeout, stream=stream, purpose='shim')
+            timeout=timeout, stream=stream, purpose='shim',
+            **{k: v for k, v in kwargs.items() if v is not None})
         if stream:
             return result          # chunk iterator (Phase 2 wires UI)
         return wrap_completion(result)
