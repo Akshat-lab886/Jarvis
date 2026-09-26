@@ -1,9 +1,12 @@
 import os
+import logging
 import threading
 import time
 from pypdf import PdfReader
 import chromadb
 from chromadb.utils import embedding_functions
+
+logger = logging.getLogger("Jarvis.Knowledge")
 
 # Native ML libs (torch/hnswlib) can hang on broken installs; a hang
 # raises nothing, so init runs under a watchdog thread instead.
@@ -14,7 +17,7 @@ class Librarian:
     The Librarian is responsible for reading, embedding, and storing knowledge in the Vault (ChromaDB).
     """
     def __init__(self):
-        print("Initializing Librarian (Vector Vault)...")
+        logger.info("Initializing Librarian (Vector Vault)...")
         self.client = None
         self.embedding_fn = None
         self.collection = None
@@ -27,8 +30,8 @@ class Librarian:
         # thread (watchdogs can't help).  Respect the switch BEFORE any
         # heavy import.
         if os.getenv('JARVIS_DISABLE_VECTOR') == '1':
-            print("Librarian: disabled via JARVIS_DISABLE_VECTOR "
-                  "(keyword-only mode).")
+            logger.info("Librarian disabled via JARVIS_DISABLE_VECTOR "
+                        "(keyword-only mode).")
             return
 
         outcome = {}
@@ -63,17 +66,19 @@ class Librarian:
         builder.join(timeout=_INIT_TIMEOUT)
 
         if builder.is_alive():
-            print(f"Librarian: initialization TIMED OUT "
-                  f"(>{_INIT_TIMEOUT}s) — vault disabled this session. "
-                  f"(Check torch/chromadb install: JARVIS_DISABLE_VECTOR=1 silences this.)")
+            logger.warning(
+                "Librarian init TIMED OUT (> %ss) — vault disabled this "
+                "session. (Check torch/chromadb install: "
+                "JARVIS_DISABLE_VECTOR=1 silences this.)", _INIT_TIMEOUT)
         elif 'error' in outcome:
-            print(f"Librarian Initialization Error: {outcome['error']}")
+            logger.warning("Librarian Initialization Error: %s", outcome['error'])
         else:
             self.client = outcome['client']
             self.embedding_fn = outcome['embedding_fn']
             self.collection = outcome['collection']
             self.ready = True
-            print(f"Librarian initialized. Knowledge Count: {outcome['count']}")
+            logger.info("Librarian initialized. Knowledge Count: %s",
+                         outcome['count'])
 
     def read_pdf(self, file_path):
         """Extract text from PDF."""
@@ -149,7 +154,8 @@ class Librarian:
         metadatas = [{"source": source_name} for _ in range(len(chunks))]
         
         if chunks:
-            print(f"Librarian: Storing {len(chunks)} chunks from {source_name}...")
+            logger.info("Storing %d chunks from %s...",
+                        len(chunks), source_name)
             self.collection.add(
                 documents=chunks,
                 ids=ids,
@@ -182,7 +188,7 @@ class Librarian:
             return context.strip()
             
         except Exception as e:
-            print(f"Vault Query Error: {e}")
+            logger.warning("Vault Query Error: %s", e)
             return None
 
     def study_folder(self, input_folder="knowledge_input", processed_folder="knowledge_processed"):
@@ -199,7 +205,7 @@ class Librarian:
         for file_path in files:
             if os.path.isfile(file_path):
                 filename = os.path.basename(file_path)
-                print(f"Studying {filename}...")
+                logger.info("Studying %s...", filename)
                 
                 # Ingest
                 self.ingest_file(file_path)
@@ -209,7 +215,8 @@ class Librarian:
                     shutil.move(file_path, os.path.join(processed_folder, filename))
                     count += 1
                 except Exception as e:
-                    print(f"Error moving {filename}: {e}")
+                    logger.warning("Could not move %s to processed: %s",
+                                   filename, e)
                     
         return f"I have finished studying {count} new documents."
 

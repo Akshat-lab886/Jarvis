@@ -10,7 +10,7 @@ Covers (all providers stubbed — no network, no real keys):
   - Error classification: http 429 -> 'rate_limit', 401 -> 'auth'
   - Streaming: non-streaming providers trigger the blocking retry fallback
   - _guarded_stream: errors BEFORE first chunk fail over to next provider
-  - _guarded_stream: errors AFTER first chunk are yielded, not failed over
+  - _guarded_stream: errors AFTER first chunk are surfaced (not swallowed)
   - _est_input_tokens: counts text content across str + multimodal chunks
 """
 
