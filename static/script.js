@@ -1016,8 +1016,20 @@ function pushAgentStep(data) {
         : data.status === 'fail' ? 'var(--fail)'
         : data.status === 'ok' ? 'var(--ok)'
         : 'var(--text-3)';
-    row.innerHTML = `<span class="mem-cat" style="color:${color}">[${status} #${data.step}]</span>` +
-        `<span class="grow">${escapeHtml(data.name || '')}${data.args ? ' ' + escapeHtml(String(data.args).slice(0, 90)) : ''}</span>`;
+    const isFail = data.status === 'fail';
+    const label = `<span class="mem-cat" style="color:${color}">[${status} #${data.step}]</span>` +
+        `<span class="grow">${escapeHtml(data.name || '')}</span>`;
+    let detail = data.args ? escapeHtml(String(data.args).slice(0, 120)) : '';
+    if (isFail && detail) {
+        // args carries the brief error reason on failure; highlight it
+        // so the user sees WHY without opening the transcript.
+        detail = `<span class="tbtn" style="color:var(--fail);border-color:rgba(248,113,113,.35);background:var(--fail-dim);margin-left:.5em;">
+                    ERROR: ${detail}
+                  </span>`;
+    } else if (detail) {
+        detail = ' ' + detail;
+    }
+    row.innerHTML = label + detail;
     feed.appendChild(row);
     feed.scrollTop = feed.scrollHeight;
     // keep feed capped so the inspector never grows unbounded

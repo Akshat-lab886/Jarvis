@@ -1272,9 +1272,14 @@ class AgentLoop:
                         tool_calls_made += 1
                         workflow_steps.append((tc.name, tc.arguments))
                         failed = str(out).startswith('ERROR')
+                        # On the inspector feed, surface the WHY on failure
+                        # (not just the red FAIL badge) so the user can see
+                        # the actual error without hunting the transcript.
+                        step_args = (out[:200] if failed
+                                     else tc.arguments)
                         self.emit_step(ui_callback, steps,
                                        'fail' if failed else 'ok',
-                                       tc.name)
+                                       tc.name, step_args)
                         if failed:
                             error_streak += 1
                             failure_log.append((tc.name, str(out)[:200]))
