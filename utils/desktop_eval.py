@@ -328,7 +328,7 @@ def run_probe(label, gemini_calls=3):
         "settle_max_ms": adaptive,
         "adaptive_settle_floor_s": (
             round(getattr(da, "SETTLE_INTERVAL_S", 0.06)
-                  * getattr(da, "SETTLE_MIN_STABLE", 2), 2)
+                  * getattr(da, "SETTLE_MIN_STABLE", 1), 2)
             if adaptive else None),
     }
 
