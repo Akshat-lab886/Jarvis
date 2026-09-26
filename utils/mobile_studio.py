@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import shutil
 import logging
@@ -208,9 +209,23 @@ class MobileManager:
             if response and 'project_name' in response:
                 return response
             elif response and 'response' in response:
-                 # It might have been wrapped in a chat response key if parsing failed partially
-                 # Or we can just return the raw text if needed but we want the dict.
-                 return response
+                # brain.think often wraps the JSON answer in a chat
+                # envelope: {"action": "chat", "response": "<json text>"}.
+                # Unwrap + parse so callers get the blueprint dict, not the
+                # envelope hiding it.
+                inner = str(response.get('response') or '').strip()
+                if inner.startswith('{'):
+                    try:
+                        parsed = json.loads(
+                            inner.replace("'", '"')
+                                 if "'" in inner and '"' not in inner
+                                 else inner)
+                    except (json.JSONDecodeError, TypeError):
+                        parsed = None
+                    if isinstance(parsed, dict) \
+                            and 'project_name' in parsed:
+                        return parsed
+                return {"error": "Failed to generate blueprint."}
             else:
                 return {"error": "Failed to generate blueprint."}
 
