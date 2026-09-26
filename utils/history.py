@@ -9,8 +9,11 @@ recent entries so it never grows unbounded.
 
 import os
 import json
+import logging
 import threading
 import datetime
+
+logger = logging.getLogger("Jarvis.History")
 
 MAX_ENTRIES = 1000
 
@@ -34,7 +37,7 @@ class CommandLog:
                 if isinstance(data, list):
                     self._entries = data[-MAX_ENTRIES:]
         except Exception as e:
-            print(f"CommandLog: Failed to load history: {e}")
+            logger.warning("Failed to load command history: %s", e)
             self._entries = []
 
     def _save(self):
@@ -45,7 +48,7 @@ class CommandLog:
             with open(self.file_path, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            print(f"CommandLog: Failed to save history: {e}")
+            logger.warning("Failed to save command history: %s", e)
 
     # ------------------------------------------------------------------ #
     # Public API
