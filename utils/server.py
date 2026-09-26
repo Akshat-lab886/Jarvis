@@ -347,6 +347,15 @@ def start_server():
     except Exception as e:
         logger.debug("startup report skipped: %s", e)
 
+    # Configuration sanity check — surface silent contradictions and
+    # locked-down features so the user doesn't discover them the hard way.
+    try:
+        from utils.config_diagnostics import run_diagnostics
+        for _line in run_diagnostics():
+            socketio.emit('ai_text', {'text': _line})
+    except Exception as e:
+        logger.debug("config diagnostics skipped: %s", e)
+
     # ------------------------------------------------------------------ #
     # Integration gateway: every channel funnels through ONE pipeline
     # ------------------------------------------------------------------ #
