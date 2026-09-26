@@ -150,7 +150,15 @@ class _ServerHandle:
             }, timeout=START_TIMEOUT)
         except Exception as e:
             self.last_error = f"initialize failed: {e}"
-            logger.warning("MCP '%s' %s", self.name, self.last_error)
+            # Guard: logging may raise BrokenPipeError / OSError during
+            # early boot when stdout is redirected or the pipe is closed.
+            # Never let a failing log call escape — the caller's exception
+            # handler is responsible for reporting; we just suppress the
+            # logging side-effect.
+            try:
+                logger.warning("MCP '%s' %s", self.name, self.last_error)
+            except Exception:
+                pass
             self.stop()
             return False
 
