@@ -212,9 +212,17 @@ class EpisodicMemory:
         return _get_index_for(self._vector_dir)
 
     def _index_entry(self, entry):
+        # Robustness: importance is always an int from remember(), but
+        # migrated/corrupted entries may hold a string ("high") or float
+        # that would crash int() and silently kill the watchdog rebuild.
+        raw = entry.get('importance', 5)
+        try:
+            importance = int(raw)
+        except (TypeError, ValueError):
+            importance = 5
         return {
             "category": entry.get('category', 'fact'),
-            "importance": int(entry.get('importance', 5)),
+            "importance": max(1, min(10, importance)),
             "created": entry.get('created', ''),
         }
 

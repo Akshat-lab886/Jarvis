@@ -117,5 +117,42 @@ class TestMemorizeText(unittest.TestCase):
             self.assertEqual(m['source'], "my_doc")
 
 
+class TestIndexEntry(unittest.TestCase):
+    """Unit-test the _index_entry metadata builder in isolation.
+
+    Covers the regression: a corrupted/migrated entry whose 'importance'
+    is a non-numeric string (e.g. "high") previously crashed int() and
+    silently killed the watchdog rebuild thread.
+    """
+
+    def _entry(self):
+        from utils.episodic_memory import EpisodicMemory
+        # Bypass __init__ (which loads/persists) — _index_entry is pure.
+        obj = EpisodicMemory.__new__(EpisodicMemory)
+        return obj._index_entry
+
+    def test_normal_int_importance(self):
+        out = self._entry()({"importance": 7, "category": "fact"})
+        self.assertEqual(out["importance"], 7)
+
+    def test_string_importance_is_coerced(self):
+        """REGRESSION: importance='high' (or any non-numeric) must not
+        raise — falls back to the default 5 instead of crashing the
+        rebuild watchdog."""
+        out = self._entry()({"importance": "high"})
+        self.assertEqual(out["importance"], 5)
+
+    def test_importance_clamped_to_range(self):
+        out = self._entry()({"importance": 999})
+        self.assertEqual(out["importance"], 10)
+        out = self._entry()({"importance": -5})
+        self.assertEqual(out["importance"], 1)
+
+    def test_defaults_when_missing(self):
+        out = self._entry()({})
+        self.assertEqual(out["importance"], 5)
+        self.assertEqual(out["category"], "fact")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
