@@ -561,6 +561,17 @@ def api_rlm():
         return jsonify({'error': 'Internal error'}), 500
 
 
+@app.route('/api/memory_stats')
+def api_memory_stats():
+    """Memory (episodic) snapshot: item count, by-category breakdown and
+    vector-index status. Used by the memory-panel refresh button."""
+    try:
+        return jsonify(executor.episodic.stats())
+    except Exception as e:
+        logger.exception("api_memory_stats failed")
+        return jsonify({'error': 'Internal error'}), 500
+
+
 @app.route('/api/goals')
 def api_goals():
     """Tracked goals: open list with progress + countdowns."""

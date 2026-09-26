@@ -16,6 +16,77 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const panelBackdrop = document.getElementById('panel-backdrop');
 
+// --- SCROLL: never yank the reader to the bottom ---
+// The transcript streams tokens continuously. Force-scrolling on every
+// delta makes it impossible to scroll up and re-read an earlier answer.
+// Policy: follow the tail only while the reader is parked at the tail.
+// If they scroll up, we hold position and surface a "↓ N NEW" pill.
+const SCROLL_FOLLOW_PX = 80;
+
+function isNearBottom(el, px) {
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= (px || SCROLL_FOLLOW_PX);
+}
+
+// Distinguish our own scrollTop writes from real user scrolling, otherwise
+// a fast stream grows the box faster than we can "follow" and the
+// stickiness test would falsely report the reader as having scrolled away.
+let _programmaticScroll = false;
+let _userScrolledUp = false;
+
+function scrollToBottom(el) {
+    if (!el) return;
+    _programmaticScroll = true;
+    el.scrollTop = el.scrollHeight;
+    setTimeout(() => { _programmaticScroll = false; }, 0);
+}
+
+if (messageContainer) {
+    messageContainer.addEventListener('scroll', () => {
+        if (_programmaticScroll) return;
+        _userScrolledUp = !isNearBottom(messageContainer, SCROLL_FOLLOW_PX);
+        if (!_userScrolledUp) {
+            // Reader came back to the tail on their own — clear the badge.
+            _unreadBelow = 0;
+            renderNewPill();
+        }
+    }, { passive: true });
+}
+
+// New content arrived. Follow only if the reader is at the tail.
+function followOrBadge() {
+    if (_userScrolledUp || !isNearBottom(messageContainer, SCROLL_FOLLOW_PX)) {
+        _userScrolledUp = true;
+        _unreadBelow += 1;
+        renderNewPill();
+    } else {
+        scrollToBottom(messageContainer);
+    }
+}
+
+// Messages appended while parked away from the tail.
+let _unreadBelow = 0;
+
+function renderNewPill() {
+    const pill = document.getElementById('new-msg-pill');
+    if (!pill) return;
+    if (_unreadBelow > 0) {
+        pill.textContent = '↓ ' + _unreadBelow + ' NEW';
+        pill.classList.add('show');
+    } else {
+        pill.classList.remove('show');
+    }
+}
+
+document.addEventListener('click', (e) => {
+    if (e.target.closest('#new-msg-pill')) {
+        _unreadBelow = 0;
+        _userScrolledUp = false;
+        renderNewPill();
+        scrollToBottom(messageContainer);
+    }
+});
+
 // --- THEME: parchment (brown/white) is the only console skin ---
 // No switcher ships. This keeps the body class pinned and migrates any
 // stale `jarvis-theme` localStorage value from the retired dark themes.
@@ -196,7 +267,7 @@ socket.on('ai_text_stream', (data) => {
             `<span class="dir">\u00AB</span>` +
             `<span class="body prose"></span>`;
         messageContainer.appendChild(row);
-        messageContainer.scrollTop = messageContainer.scrollHeight;
+        scrollToBottom(messageContainer);
         _streamState.row = row;
         _streamState.body = row.querySelector('.body');
         _streamState.text = '';
@@ -205,7 +276,8 @@ socket.on('ai_text_stream', (data) => {
     _streamState.text += delta;
     _streamState.body.textContent =
         _streamState.body.textContent + delta;
-    messageContainer.scrollTo({ top: messageContainer.scrollHeight });
+    // Follow the tail per token, but never fight a reader who scrolled up.
+    if (!_userScrolledUp) scrollToBottom(messageContainer);
 });
 
 socket.on('ai_text_stream_end', () => {
