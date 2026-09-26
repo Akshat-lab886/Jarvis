@@ -12,7 +12,10 @@ Reminders are persisted to reminders.json so they survive restarts.
 import os
 import re
 import json
+import logging
 import time
+
+logger = logging.getLogger("Jarvis.Scheduler")
 import threading
 import datetime
 
@@ -73,7 +76,7 @@ class ReminderScheduler:
                 self._reminders = data.get('reminders', [])
                 self._next_id = data.get('next_id', 1)
         except Exception as e:
-            print(f"Scheduler: Failed to load reminders: {e}")
+            logger.warning("Failed to load reminders: %s", e)
 
     def _clear_persisted(self):
         """Remove any saved reminders so old ones don't auto-fire on startup."""
@@ -92,7 +95,7 @@ class ReminderScheduler:
             with open(self.file_path, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            print(f"Scheduler: Failed to save reminders: {e}")
+            logger.warning("Failed to save reminders: %s", e)
 
     # ------------------------------------------------------------------ #
     # Parsing
@@ -317,7 +320,7 @@ class ReminderScheduler:
 
     def _fire(self, reminder):
         msg = f"⏰ Reminder: {reminder['text']}"
-        print(f"Scheduler: {msg}")
+        logger.info(msg)
         # Keep a copy so the dashboard can snooze it after it fires
         with self._lock:
             self._last_fired[reminder['id']] = dict(reminder)
@@ -336,12 +339,12 @@ class ReminderScheduler:
             try:
                 self.mouth.speak(f"Sir, reminder: {reminder['text']}")
             except Exception as e:
-                print(f"Scheduler: speak failed: {e}")
+                logger.warning("Reminders: speak failed: %s", e)
         if self.on_fire is not None:
             try:
                 self.on_fire(reminder)
             except Exception as e:
-                print(f"Scheduler: on_fire hook failed: {e}")
+                logger.warning("Reminders: on_fire hook failed: %s", e)
 
     def snooze(self, reminder_id, minutes=10):
         """
@@ -383,7 +386,7 @@ class ReminderScheduler:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="ReminderScheduler")
         self._thread.start()
-        print("Reminder scheduler started.")
+        logger.info("Reminder scheduler started.")
 
     def stop(self):
         self._running = False
@@ -393,7 +396,7 @@ class ReminderScheduler:
             try:
                 self._check_due()
             except Exception as e:
-                print(f"Scheduler loop error: {e}")
+                logger.warning("Scheduler loop error: %s", e)
             time.sleep(self.poll_interval)
 
     def _check_due(self):
