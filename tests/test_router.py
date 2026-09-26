@@ -207,6 +207,32 @@ class TestRouterStreaming(unittest.TestCase):
         # A was tried, B produced the content
         self.assertEqual(len(a._calls), 1)
 
+    def test_stream_mid_chunk_error_surfaces(self):
+        """If a streaming provider errors AFTER yielding its first chunk,
+        the router must surface the error (not silently truncate) and must
+        NOT credit the partial output to the session budget. Previously the
+        mid-stream exception was swallowed — the consumer got a short,
+        truncated response with no error and no failover signal."""
+        from utils.llm.providers.base import (ProviderError, ChatResult,
+                                             Usage)
+
+        def _stream_then_break():
+            yield ChatResult(text="partial", provider="a", model="stub",
+                             finish_reason=None, usage=Usage(0, 0))
+            raise ProviderError("connection reset mid-stream", kind="generic")
+
+        a = _stub_provider("a", [_ok("a", text="placeholder")])
+        # Replace the stub's chat to return a generator that yields a chunk
+        # THEN raises — exercising _guarded_stream's mid-stream finally branch.
+        a.chat = lambda msgs, **kw: _stream_then_break()
+        with patch.dict(os.environ, {"JARVIS_PROVIDER_ORDER": "a"}):
+            r = self._router({"a": a})
+            res = r.chat([{"role": "user", "content": "hi"}], stream=True)
+            with self.assertRaises(Exception) as ctx:
+                list(res)
+        # The surfaced error must carry the original provider context.
+        self.assertIn("a", str(ctx.exception))
+
     def test_stream_non_streaming_fallback(self):
         """A provider that returns [no_stream] triggers the blocking
         retry (router.chat(stream=False) on the next pass)."""

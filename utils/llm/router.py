@@ -295,7 +295,19 @@ class Router:
             except Exception as err:
                 got_error = err
             finally:
-                if got_error is None:
+                if got_error is not None:
+                    # A mid-stream failure: do NOT credit the partial output
+                    # to the session budget (the user got an incomplete
+                    # answer), but surface the error so the caller can react
+                    # instead of silently truncating their response.
+                    kind = getattr(got_error, 'kind', 'generic')
+                    attempts.append((provider.name, model,
+                                     f"[{kind}] {got_error}"))
+                    self._cooldown_set(provider.name, model, kind)
+                    logger.warning("stream failed mid-chunk via %s/%s: %s",
+                                   provider.name, model, got_error)
+                    raise AllProvidersError(attempts)
+                else:
                     probe = first.get('chunk')
                     if probe is not None:
                         self._record(provider.name, model, probe)
