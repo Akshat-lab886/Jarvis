@@ -77,7 +77,7 @@ def _warm_librarian():
     try:
         _ = executor.librarian      # lazy init happens here, offline
     except Exception as e:
-        print(f"Librarian warmup failed: {e}")
+        logger.warning(f"Librarian warmup failed: {e}")
 threading.Thread(target=_warm_librarian, daemon=True,
                   name="librarian-warmup").start()
 
@@ -122,7 +122,7 @@ def start_vitals_thread():
     if vitals_thread is None or not vitals_thread.is_alive():
         vitals_thread = threading.Thread(target=emit_system_vitals, daemon=True)
         vitals_thread.start()
-        print("System vitals monitoring started")
+        logger.info("System vitals monitoring started")
 
 
 def _get_ssl_context():
@@ -144,15 +144,15 @@ def _get_ssl_context():
                 '-keyout', key_file, '-out', cert_file, '-days', '365', '-nodes',
                 '-subj', '/CN=localhost'
             ], check=True, capture_output=True)
-            print(f"Generated persistent HTTPS cert in {cert_dir}")
+            logger.info(f"Generated persistent HTTPS cert in {cert_dir}")
         except Exception as e:
-            print(f"HTTPS cert generation failed, falling back to HTTP: {e}")
+            logger.warning(f"HTTPS cert generation failed, falling back to HTTP: {e}")
             return None
     return (cert_file, key_file)
 
 
 def start_server():
-    print(f"Starting server on port {Config.PORT}")
+    logger.info(f"Starting server on port {Config.PORT}")
     import random
     
     # Initialize Telegram Bot (Single Instance, shares the main Brain)
@@ -162,7 +162,7 @@ def start_server():
             tele_bot = JarvisTeleBot(executor, brain=brain)
             tele_bot.start_polling()
         except Exception as e:
-            print(f"Telegram Init Failed: {e}")
+            logger.warning(f"Telegram Init Failed: {e}")
 
     # Route reminder notifications to Telegram.
     # NOTE: Scheduler does NOT auto-start — reminders only fire when
@@ -190,10 +190,10 @@ def start_server():
                         text=str(text)[:1000])
                     _bot._send(coro)
                 except Exception as e:
-                    print(f"Proactive Telegram push skipped: {e}")
+                    logger.warning(f"Proactive Telegram push skipped: {e}")
             register_telegram_hook(_push_proactive)
         except Exception as e:
-            print(f"Proactive Telegram hook skipped: {e}")
+            logger.warning(f"Proactive Telegram hook skipped: {e}")
 
     # Recurring automations (cron-style jobs) — persist across restarts
     # and execute real Jarvis actions through the brain + executor.
@@ -239,7 +239,7 @@ def start_server():
         from utils.notify import get_notifier
         start_watchdog(brain=brain, notifier=get_notifier())
     except Exception as e:
-        print(f"Goals watchdog skipped: {e}")
+        logger.warning(f"Goals watchdog skipped: {e}")
 
     # Interrupted-task recovery: tasks parked as PAUSED by a restart
     # auto-resume in the background (full autonomy) instead of waiting
@@ -266,10 +266,10 @@ def start_server():
                         ok, _msg = executor.task_manager.start_task(_t.id)
                         if ok:
                             _resumed += 1
-                            print(f"Autonomy: resumed interrupted task "
+                            logger.info(f"Autonomy: resumed interrupted task "
                                   f"{_t.id} ({_t.description[:50]})")
                     except Exception as e:
-                        print(f"Autonomy: resume of task {_t.id} "
+                        logger.warning(f"Autonomy: resume of task {_t.id} "
                               f"failed: {e}")
                 if _resumed:
                     try:
@@ -280,9 +280,9 @@ def start_server():
                     except Exception:
                         pass
         except Exception as e:
-            print(f"Autonomy: interrupted-task scan skipped: {e}")
+            logger.warning(f"Autonomy: interrupted-task scan skipped: {e}")
     else:
-        print("Autonomy: fleet down (breaker tripped) — interrupted "
+        logger.warning("Autonomy: fleet down (breaker tripped) — interrupted "
               "tasks stay parked for manual resume.")
 
     # Omnichannel gateway hub (Discord polling + Slack webhook/route).
@@ -292,7 +292,7 @@ def start_server():
         from utils.gateways import get_hub
         get_hub().start(brain)
     except Exception as e:
-        print(f"Gateway hub init skipped: {e}")
+        logger.warning(f"Gateway hub init skipped: {e}")
 
     # Skill forge maintenance loop — distills skills from successful
     # workflows and patches failing ones (background, bounded).
@@ -300,7 +300,7 @@ def start_server():
         from utils.skill_forge import get_forge
         get_forge().start(brain)
     except Exception as e:
-        print(f"Skill forge start skipped: {e}")
+        logger.warning(f"Skill forge start skipped: {e}")
 
     # Proactive engine — background schedule-clash + urgent-mail
     # narration (dashboard always; voice/Telegram per notifier config,
@@ -315,7 +315,7 @@ def start_server():
             notifier=get_notifier())
         _proactive.start()
     except Exception as e:
-        print(f"Proactive engine start skipped: {e}")
+        logger.warning(f"Proactive engine start skipped: {e}")
 
     # Human-in-the-loop approvals: route hold requests to the dashboard
     executor.approvals.emit_fn = lambda event, payload: socketio.emit(
@@ -328,10 +328,10 @@ def start_server():
         msg = ("⚠️ Circuit breaker TRIPPED at startup: " +
                "; ".join(c['detail'] for c in _report.failures()
                          if c['fatal']))
-        print(msg)
+        logger.info(msg)
         socketio.emit('ai_text', {'text': msg})
     elif _report.status == 'degraded':
-        print("⚠️ Circuit breaker degraded: " +
+        logger.warning("⚠️ Circuit breaker degraded: " +
               "; ".join(f"{c['name']}: {c['detail']}"
                         for c in _report.failures()))
 
@@ -414,7 +414,7 @@ def start_server():
         wire_default_services(executor=executor)
         get_manager().start()
     except Exception as e:
-        print(f"Hibernation init skipped: {e}")
+        logger.warning(f"Hibernation init skipped: {e}")
 
     # RLM (recursive memory) maintenance daemon: periodic 'sleep' passes
     # that fold events into summaries/abstractions and refresh the world
@@ -424,14 +424,14 @@ def start_server():
         from utils.rlm import get_rlm
         get_rlm().start_maintenance(brain)
     except Exception as e:
-        print(f"RLM maintenance skipped: {e}")
+        logger.warning(f"RLM maintenance skipped: {e}")
 
     greetings = ["Online and ready, Sir.", "Systems operational.", "Good to see you again, Sir.", "I am Jarvis, at your service."]
     try:
         greeting = random.choice(greetings)
         executor.mouth.speak(greeting)
     except Exception as e:
-        print(f"Startup greeting failed: {e}")
+        logger.warning(f"Startup greeting failed: {e}")
         
     # Disable reloader to prevent double initialization of threads/bot
     ssl_ctx = _get_ssl_context()
@@ -454,13 +454,13 @@ def start_server():
             s.close()
     _port = Config.PORT
     if not _port_free(_port):
-        print(f"⚠ Port {_port} in use — searching for a free port…")
+        logger.warning(f"⚠ Port {_port} in use — searching for a free port…")
         _orig = _port
         for _candidate in range(_port + 1, _port + 100):
             if _port_free(_candidate):
                 _port = _candidate
                 break
-        print(f"⚠ Falling back to port {_port} (configured {_orig} was busy)")
+        logger.warning(f"⚠ Falling back to port {_port} (configured {_orig} was busy)")
     # Keep CORS consistent with the port we actually bind (the SocketIO
     # server captured the origin list at import time, so re-point it now).
     if _port != Config.PORT:
@@ -470,7 +470,7 @@ def start_server():
                 o.replace(f':{Config.PORT}', f':{_port}')
                 for o in (_eio.cors_allowed_origins or [])]
         except Exception as _e:
-            print(f"CORS port re-point skipped: {_e}")
+            logger.warning(f"CORS port re-point skipped: {_e}")
 
     socketio.run(app, host=_bind_host, port=_port,
                  allow_unsafe_werkzeug=True,
@@ -1902,7 +1902,7 @@ def _emit_automations():
                 j['next'] = ''
                 j['next_ts'] = None
     except Exception as e:
-        print(f"Automations emit failed: {e}")
+        logger.warning(f"Automations emit failed: {e}")
     socketio.emit('automations_update', {'jobs': jobs})
 
 
@@ -1998,4 +1998,4 @@ def handle_approval_response(data):
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('Client disconnected')
+    logger.info('Client disconnected')
