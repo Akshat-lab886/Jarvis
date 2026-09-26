@@ -234,6 +234,28 @@ class TestExtApiSpotPrice(_NetMockMixin, unittest.TestCase):
         self.assertIn("AAPL", r)
         self.assertIn("220.5", r)
 
+    def test_spot_price_crypto_unknown_symbol_n_a(self):
+        """A crypto symbol NOT in _CG_IDS falls back to symbol.lower()
+        as the coin ID; if CoinGecko has no match, 'n/a' is reported."""
+        import utils.ext_api as ea
+        fake = MagicMock()
+        fake.json.return_value = {}  # no such coin
+        with patch.object(ea._http, "get", return_value=fake):
+            r = ea.spot_price("DOGE-USD")
+        self.assertIn("DOGE-USD", r)
+        self.assertIn("n/a", r)
+
+    def test_spot_price_coingecko_rate_limit_degrades(self):
+        """CoinGecko free-tier 429 returns {'status': {'error_code': 429}}
+        — the crypto leg must report rate-limit, not crash."""
+        import utils.ext_api as ea
+        fake = MagicMock()
+        fake.json.return_value = {"status": {"error_code": 429,
+                                             "error_message": "rate limit"}}
+        with patch.object(ea._http, "get", return_value=fake):
+            r = ea.spot_price("BTC-USD")
+        self.assertIn("rate-limit", r.lower())
+
     def test_spot_price_coingecko_ratelimit(self):
         """CoinGecko 429 -> graceful rate-limited message."""
         import utils.ext_api as ea
