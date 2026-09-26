@@ -24,7 +24,10 @@ BudgetExceededError which callers translate into a polite halt.
 import os
 import json
 import time
+import logging
 import threading
+
+logger = logging.getLogger("Jarvis.Budget")
 
 # Rough blended USD per 1K tokens (in+out averaged). Conservative.
 _DEFAULT_PRICES = {
@@ -105,10 +108,12 @@ class Budget:
                  self.spent_tokens >= self.limit_tokens)):
                 self.halted = True
             if self.halted:
-                print(f"🛑 SESSION BUDGET EXHAUSTED — halting LLM calls "
-                      f"(${self.spent_usd:.3f}/${self.limit_usd:.2f}, "
-                      f"{self.spent_tokens} tokens). "
-                      f"Restart Jarvis or raise JARVIS_BUDGET_USD.")
+                logger.critical(
+                    "SESSION BUDGET EXHAUSTED — halting LLM calls "
+                    "($%s/$%s, %s tokens). "
+                    "Restart Jarvis or raise JARVIS_BUDGET_USD.",
+                    f"{self.spent_usd:.3f}", f"{self.limit_usd:.2f}",
+                    self.spent_tokens)
                 raise BudgetExceededError(
                     f"Session budget exhausted "
                     f"(${self.spent_usd:.2f}/${self.limit_usd:.2f})")
@@ -120,10 +125,12 @@ class Budget:
         worst = self._pct_used()
         if worst >= self.warn_pct:
             self.warned = True
-            print(f"⚠️  Budget warning: {worst:.0f}% of session "
-                  f"budget used (${self.spent_usd:.3f}/"
-                  f"${self.limit_usd:.2f}, "
-                  f"{self.spent_tokens}/{self.limit_tokens} tokens)")
+            logger.warning(
+                "Budget warning: %d%% of session budget used "
+                "($%s/$%s, %s/%s tokens)",
+                round(worst),
+                f"{self.spent_usd:.3f}", f"{self.limit_usd:.2f}",
+                self.spent_tokens, self.limit_tokens)
 
     def record(self, model=None, input_text='', output_text='',
                usage=None):
